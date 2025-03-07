@@ -4,75 +4,89 @@ Eine Webanwendung zur Visualisierung von Fotos auf einer Karte basierend auf ihr
 
 ## Funktionen
 
-- Anzeige von Fotos auf einer Karte basierend auf ihren GPS-Koordinaten
-- Mehrere Kartenansichten: Straßenkarte, Satellitenansicht und topographische Karte
+- Anzeige von Fotos auf einer interaktiven Karte basierend auf GPS-Metadaten
+- Unterstützung für verschiedene Kartenansichten (OpenStreetMap, Satellit, Topographisch)
 - Marker-Clustering für bessere Übersicht bei vielen Fotos
-- Anklicken von Markern, um die Fotos anzuzeigen
-- Vollbildansicht für Fotos
-- Ein- und ausblendbare Debug-Informationen
-- Foto-Zähler zur Anzeige der geladenen Fotos
-- Ladebildschirm während des Datenabrufs
-- Automatisches Auslesen der GPS-Daten aus den EXIF-Metadaten der Fotos
+- Anzeige von Foto-Vorschaubildern beim Klicken auf Marker
+- Ladebildschirm während der Initialisierung
+- Anzeige der Gesamtanzahl der Fotos
 
-## Technologien
+## Voraussetzungen
 
-### Backend
-- Python mit FastAPI
-- exifread für das Auslesen der EXIF-Daten
-- Statische Dateibereitstellung für Bilder
+- Node.js (v14 oder höher)
+- Python 3.x (für den Backend-Server)
+- Bilder mit GPS-Metadaten im Verzeichnis `images/`
 
-### Frontend
-- React 19
-- Leaflet und react-leaflet für die Kartenintegration
-- react-leaflet-markercluster für das Clustering von Markern
+## Installation
 
-## Installation und Start
-
-### Backend
-
-1. Installieren Sie die erforderlichen Python-Pakete:
+1. Klonen Sie das Repository:
    ```
-   pip install fastapi uvicorn exifread
-   ```
-
-2. Erstellen Sie einen `images/`-Ordner und legen Sie Ihre Fotos darin ab.
-
-3. Starten Sie den Backend-Server:
-   ```
-   python -m uvicorn main:app --reload
-   ```
-
-### Frontend
-
-1. Navigieren Sie zum Frontend-Verzeichnis:
-   ```
-   cd frontend
+   git clone https://github.com/CodeNinjaGuy/technik25-gps-map.git
+   cd technik25-gps-map
    ```
 
 2. Installieren Sie die Abhängigkeiten:
    ```
    npm install
-   ```
-
-3. Starten Sie die Anwendung:
-   ```
-   npm start
+   pip install pillow
    ```
 
 ## Verwendung
 
-1. Öffnen Sie die Anwendung in Ihrem Browser unter `http://localhost:3000` (oder dem Port, den der Entwicklungsserver anzeigt).
-2. Die Karte wird mit Markern für jedes Foto mit GPS-Daten angezeigt. Marker in der Nähe werden zu Clustern zusammengefasst.
-3. Verwenden Sie die Layer-Kontrolle in der oberen rechten Ecke, um zwischen Straßenkarte, Satellitenansicht und topographischer Karte zu wechseln.
-4. Klicken Sie auf einen Marker oder Cluster, um die Fotos anzuzeigen.
-5. Klicken Sie auf das Foto oder den "Vollbild"-Button, um das Foto im Vollbildmodus anzuzeigen.
-6. Verwenden Sie den Button in der unteren rechten Ecke, um Debug-Informationen ein- oder auszublenden.
-7. In der oberen rechten Ecke sehen Sie die Anzahl der geladenen Fotos.
+### Entwicklungsmodus
 
-## Hinweise
+1. Starten Sie den Backend-Server:
+   ```
+   node server.js
+   ```
 
-- Die Fotos müssen GPS-Metadaten enthalten, damit sie auf der Karte angezeigt werden können.
+2. Starten Sie den Frontend-Server in einem separaten Terminal:
+   ```
+   npm start
+   ```
 
-## Entwickler
+3. Öffnen Sie die Anwendung in Ihrem Browser unter `http://localhost:3000`
 
-Entwickelt von Martin Bundschuh 
+### Electron-Entwicklungsmodus
+
+Um die Anwendung als Electron-App im Entwicklungsmodus zu starten:
+
+```
+npm run electron:dev
+```
+
+### Kompilieren einer eigenständigen Anwendung
+
+Sie können eine eigenständige Desktop-Anwendung erstellen, die mit einem Klick gestartet werden kann:
+
+1. Bauen Sie die Anwendung:
+   ```
+   npm run electron:build
+   ```
+
+2. Die kompilierte Anwendung finden Sie im Verzeichnis `dist/`:
+   - Windows: `dist/Technik25 GPS Map Setup.exe`
+   - macOS: `dist/Technik25 GPS Map.dmg`
+   - Linux: `dist/Technik25 GPS Map.AppImage`
+
+## Hinweise zur Verwendung
+
+- Legen Sie Ihre Fotos mit GPS-Metadaten im Verzeichnis `images/` ab
+- Die Anwendung unterstützt gängige Bildformate wie JPG, JPEG, PNG
+- Fotos ohne GPS-Metadaten werden nicht auf der Karte angezeigt
+- Für eine optimale Leistung wird empfohlen, nicht mehr als einige tausend Fotos gleichzeitig zu verwalten
+
+## Technologien
+
+- Frontend: React, Leaflet, React-Leaflet
+- Backend: Node.js, Express
+- Metadaten-Extraktion: Python (Pillow)
+- Desktop-Anwendung: Electron
+
+## Lizenz
+
+MIT
+
+## Autor
+
+CodeNinjaGuy 
