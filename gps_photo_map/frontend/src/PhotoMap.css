@@ -1,0 +1,62 @@
+.debug-panel {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background-color: white;
+  padding: 10px;
+  border-radius: 5px;
+  max-width: 300px;
+  z-index: 1000;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  font-size: 0.8rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.debug-panel h3 {
+  margin-top: 0;
+  font-size: 1rem;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+}
+
+.debug-panel pre {
+  font-size: 0.7rem;
+  background-color: #f5f5f5;
+  padding: 5px;
+  border-radius: 3px;
+  overflow-x: auto;
+}
+
+/* Styling für das InfoWindow */
+.photo-info {
+  padding: 5px;
+  text-align: center;
+}
+
+.photo-info img {
+  max-width: 200px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* Fehler- und Lademeldungen */
+.error-message {
+  background-color: #f8d7da;
+  color: #721c24;
+  padding: 20px;
+  border-radius: 5px;
+  margin: 20px;
+  text-align: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.loading-message {
+  background-color: #d1ecf1;
+  color: #0c5460;
+  padding: 20px;
+  border-radius: 5px;
+  margin: 20px;
+  text-align: center;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+} 

@@ -1,0 +1,12 @@
+# Bilder ausschließen
+images/
+*.jpg
+*.jpeg
+*.png
+# Node.js
+node_modules/
+# Python
+__pycache__/
+venv/
+# Betriebssystem
+.DS_Store
