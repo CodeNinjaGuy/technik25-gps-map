@@ -66,8 +66,10 @@ Sie können eine eigenständige Desktop-Anwendung erstellen, die mit einem Klick
 
 2. Die kompilierte Anwendung finden Sie im Verzeichnis `dist/`:
    - Windows: `dist/Technik25 GPS Map Setup.exe`
-   - macOS: `dist/Technik25 GPS Map.dmg`
-   - Linux: `dist/Technik25 GPS Map.AppImage`
+   - macOS: `dist/Technik25 GPS Map-[version]-[arch].dmg` (z.B. `Technik25 GPS Map-1.0.0-arm64.dmg`)
+   - Linux: `dist/Technik25 GPS Map-[version]-[arch].AppImage`
+
+3. Installieren Sie die Anwendung durch Doppelklick auf die entsprechende Datei.
 
 ## Hinweise zur Verwendung
 
