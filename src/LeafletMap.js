@@ -81,9 +81,40 @@ function LeafletMap() {
   const [mapKey, setMapKey] = useState(Date.now()); // Erzwingt Map-Neuzeichnung
   const [debugInfo, setDebugInfo] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [directoryContent, setDirectoryContent] = useState(null);
   const mapRef = useRef(null);
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 3;
+  const [serverStatus, setServerStatus] = useState(null);
+
+  const loadServerStatus = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/status');
+      if (!response.ok) throw new Error(`HTTP Fehler! Status: ${response.status}`);
+      const data = await response.json();
+      console.log('Server-Status geladen:', data);
+      setServerStatus(data);
+      return data;
+    } catch (error) {
+      console.error('Fehler beim Laden des Server-Status:', error);
+      return null;
+    }
+  };
+
+  const loadDirectoryContent = async () => {
+    try {
+      console.log('Lade Verzeichnisinhalt...');
+      const response = await fetch('http://localhost:3001/api/list-directory');
+      if (!response.ok) throw new Error(`HTTP Fehler! Status: ${response.status}`);
+      const data = await response.json();
+      console.log('Verzeichnisinhalt geladen:', data);
+      setDirectoryContent(data);
+      return data;
+    } catch (error) {
+      console.error('Fehler beim Laden des Verzeichnisinhalts:', error);
+      return null;
+    }
+  };
 
   const loadDirectoryInfo = async () => {
     try {
@@ -110,6 +141,9 @@ function LeafletMap() {
     setDebugInfo(null);
     
     try {
+      // Lade aktuellen Server-Status
+      await loadServerStatus();
+      
       console.log('Lade Fotos...');
       const response = await fetch('http://localhost:3001/api/photos');
       
@@ -124,14 +158,27 @@ function LeafletMap() {
         setPhotos(data);
         setMapKey(Date.now()); // Erzwingt Neuzeichnung der Karte
         
+        // Prüfe, ob wir die Fallback-Daten erhalten haben
+        const isFallbackData = data.some(photo => 
+          photo.filename === 'beispiel1.jpg' || 
+          photo.filename === 'beispiel2.jpg' || 
+          photo.filename === 'beispiel3.jpg'
+        );
+        
         // Sammle Debug-Informationen
         setDebugInfo({
           photosLoaded: data.length,
           photosWithCoordinates: data.filter(p => p.latitude && p.longitude).length,
           photosWithoutCoordinates: data.filter(p => !p.latitude || !p.longitude).length,
+          isFallbackData: isFallbackData,
           samplePhoto: data[0],
           timestamp: new Date().toISOString()
         });
+        
+        if (isFallbackData) {
+          console.warn('Fallback-Daten erhalten. Versuche, Verzeichnisinformationen zu laden...');
+          await loadDirectoryContent();
+        }
       } else {
         console.warn('Keine Fotos gefunden oder leeres Array zurückgegeben');
         setPhotos([]);
@@ -143,6 +190,7 @@ function LeafletMap() {
           setTimeout(refreshPhotos, 2000);
           return;
         } else {
+          await loadDirectoryContent();
           throw new Error('Keine Fotos mit GPS-Daten gefunden nach mehreren Versuchen.');
         }
       }
@@ -154,6 +202,9 @@ function LeafletMap() {
         error: error.message,
         stack: error.stack
       }));
+      
+      // Versuche, Verzeichnisinformationen zu laden
+      await loadDirectoryContent();
     } finally {
       setLoading(false);
     }
@@ -176,6 +227,7 @@ function LeafletMap() {
 
   const initializeApp = async () => {
     const dirInfo = await loadDirectoryInfo();
+    await loadServerStatus();
     if (dirInfo) {
       await refreshPhotos();
     }
@@ -217,6 +269,13 @@ function LeafletMap() {
     
     return [sumLat / validPhotos.length, sumLng / validPhotos.length];
   };
+  
+  // Prüfe, ob wir die Demo-Daten anzeigen
+  const isDemoData = photos.some(photo => 
+    photo.filename === 'beispiel1.jpg' || 
+    photo.filename === 'beispiel2.jpg' || 
+    photo.filename === 'beispiel3.jpg'
+  );
 
   // Rendere die Karte
   return (
@@ -235,12 +294,30 @@ function LeafletMap() {
             <h3>Debug-Informationen</h3>
             <p>Pfad: {directoryInfo.currentPath}</p>
             <p>Standard-Verzeichnis: {directoryInfo.isDefault ? 'Ja' : 'Nein'}</p>
+            <p>Pfad existiert: {directoryInfo.exists ? 'Ja' : 'Nein'}</p>
+            <p>Ist Verzeichnis: {directoryInfo.isDirectory ? 'Ja' : 'Nein'}</p>
             <p>Electron verfügbar: {isElectronAvailable() ? 'Ja' : 'Nein'}</p>
+            <p>Demo-Daten werden angezeigt: {isDemoData ? 'Ja' : 'Nein'}</p>
+            <button className="debug-toggle-button" onClick={loadDirectoryContent}>
+              Verzeichnisinhalt laden
+            </button>
             <button className="debug-toggle-button" onClick={() => setShowDebug(!showDebug)}>
               Debug-Details {showDebug ? 'ausblenden' : 'anzeigen'}
             </button>
             {showDebug && debugInfo && (
               <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+            )}
+            {showDebug && serverStatus && (
+              <div>
+                <h4>Server-Status:</h4>
+                <pre>{JSON.stringify(serverStatus, null, 2)}</pre>
+              </div>
+            )}
+            {showDebug && directoryContent && (
+              <div>
+                <h4>Verzeichnisinhalt:</h4>
+                <pre>{JSON.stringify(directoryContent, null, 2)}</pre>
+              </div>
             )}
           </div>
         </div>
@@ -259,6 +336,12 @@ function LeafletMap() {
             </button>
           </div>
           
+          {isDemoData && (
+            <div className="demo-data-warning">
+              Achtung: Es werden Demo-Daten angezeigt! Bitte wählen Sie einen Ordner mit Bildern, die GPS-Daten enthalten.
+            </div>
+          )}
+          
           <div className="photo-counter">
             {photos.filter(p => p.latitude && p.longitude).length} Fotos mit GPS-Daten gefunden
           </div>
@@ -267,11 +350,33 @@ function LeafletMap() {
             Debug-Infos {showDebug ? 'ausblenden' : 'anzeigen'}
           </button>
           
-          {showDebug && debugInfo && (
+          {showDebug && (
             <div className="debug-panel">
               <h3>Debug-Informationen</h3>
               <p>Electron verfügbar: {isElectronAvailable() ? 'Ja' : 'Nein'}</p>
-              <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+              <p>Pfad: {directoryInfo.currentPath}</p>
+              <p>Standard-Verzeichnis: {directoryInfo.isDefault ? 'Ja' : 'Nein'}</p>
+              <p>Pfad existiert: {directoryInfo.exists ? 'Ja' : 'Nein'}</p>
+              <p>Ist Verzeichnis: {directoryInfo.isDirectory ? 'Ja' : 'Nein'}</p>
+              <p>Demo-Daten werden angezeigt: {isDemoData ? 'Ja' : 'Nein'}</p>
+              <button className="debug-toggle-button" onClick={loadDirectoryContent}>
+                Verzeichnisinhalt laden
+              </button>
+              {debugInfo && (
+                <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+              )}
+              {serverStatus && (
+                <div>
+                  <h4>Server-Status:</h4>
+                  <pre>{JSON.stringify(serverStatus, null, 2)}</pre>
+                </div>
+              )}
+              {directoryContent && (
+                <div>
+                  <h4>Verzeichnisinhalt:</h4>
+                  <pre>{JSON.stringify(directoryContent, null, 2)}</pre>
+                </div>
+              )}
             </div>
           )}
           
