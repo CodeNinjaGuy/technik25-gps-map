@@ -22,7 +22,7 @@ function createWindow() {
   // Lade die index.html der App
   const indexPath = isDev
     ? 'http://localhost:3000'
-    : `file://${path.join(__dirname, '../index.html')}`;
+    : `file://${path.join(__dirname, '../build/index.html')}`;
   
   console.log('Lade Anwendung von:', indexPath);
   
@@ -49,11 +49,11 @@ function startServer() {
     serverPath = path.join(__dirname, '../server.js');
   } else {
     // In der Produktionsversion ist die server.js im Hauptverzeichnis
-    serverPath = path.join(process.resourcesPath, 'app.asar', 'server.js');
+    serverPath = path.join(app.getAppPath(), 'server.js');
     
     // Fallback, wenn der Pfad nicht existiert
     if (!fs.existsSync(serverPath)) {
-      serverPath = path.join(app.getAppPath(), 'server.js');
+      serverPath = path.join(process.resourcesPath, 'app', 'server.js');
     }
   }
   
@@ -67,7 +67,11 @@ function startServer() {
       ? path.join(__dirname, '../images') 
       : path.join(process.resourcesPath, 'images');
     
+    // Setze die Umgebungsvariable für den Produktionsmodus
+    process.env.NODE_ENV = isDev ? 'development' : 'production';
+    
     console.log('Bilder-Pfad:', process.env.IMAGES_PATH);
+    console.log('NODE_ENV:', process.env.NODE_ENV);
     
     serverProcess = spawn('node', [serverPath], {
       stdio: 'inherit',

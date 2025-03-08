@@ -46,7 +46,10 @@
       "server.js"
     ],
     "extraResources": [
-      "images/**"
+      {
+        "from": "images",
+        "to": "images"
+      }
     ],
     "directories": {
       "buildResources": "assets"

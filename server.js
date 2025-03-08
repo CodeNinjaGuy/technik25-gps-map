@@ -147,17 +147,38 @@ print(json.dumps(photo_data))
 
 // Für Produktionsumgebung: Statische Dateien aus dem Build-Verzeichnis bereitstellen
 if (process.env.NODE_ENV === 'production') {
+  console.log('Produktionsmodus: Statische Dateien werden bereitgestellt');
+  
+  // Bestimme den Pfad zum Build-Verzeichnis
   const buildPath = path.join(__dirname, 'build');
+  console.log('Build-Verzeichnis:', buildPath);
+  
   if (fs.existsSync(buildPath)) {
+    // Statische Dateien aus dem Build-Verzeichnis bereitstellen
     app.use(express.static(buildPath));
     
+    // Alle anderen Anfragen an index.html weiterleiten (für React Router)
     app.get('*', (req, res) => {
       res.sendFile(path.join(buildPath, 'index.html'));
     });
     
-    console.log('Produktionsmodus: Statische Dateien werden aus dem Build-Verzeichnis bereitgestellt');
+    console.log('Build-Verzeichnis gefunden und konfiguriert');
   } else {
     console.warn(`Warnung: Build-Verzeichnis existiert nicht: ${buildPath}`);
+    
+    // Versuche, das Build-Verzeichnis relativ zum aktuellen Arbeitsverzeichnis zu finden
+    const altBuildPath = path.join(process.cwd(), 'build');
+    console.log('Alternatives Build-Verzeichnis:', altBuildPath);
+    
+    if (fs.existsSync(altBuildPath)) {
+      app.use(express.static(altBuildPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(altBuildPath, 'index.html'));
+      });
+      console.log('Alternatives Build-Verzeichnis gefunden und konfiguriert');
+    } else {
+      console.error('Kein Build-Verzeichnis gefunden. Die Anwendung wird möglicherweise nicht korrekt funktionieren.');
+    }
   }
 }
 
@@ -166,4 +187,5 @@ app.listen(PORT, () => {
   console.log(`Server läuft auf Port ${PORT}`);
   console.log(`API-Endpunkt: http://localhost:${PORT}/api/photos`);
   console.log(`Bilder-Verzeichnis: ${imagesPath}`);
+  console.log(`Umgebung: ${process.env.NODE_ENV || 'development'}`);
 }); 
