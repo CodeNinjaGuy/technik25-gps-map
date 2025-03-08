@@ -51,6 +51,9 @@
         "to": "images"
       }
     ],
+    "extraMetadata": {
+      "main": "public/electron.js"
+    },
     "directories": {
       "buildResources": "assets"
     },

@@ -3,9 +3,13 @@ const path = require('path');
 const isDev = require('electron-is-dev');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const express = require('express');
+const cors = require('cors');
+const { exec } = require('child_process');
 
 let mainWindow;
 let serverProcess;
+let server;
 
 function createWindow() {
   // Erstelle das Browser-Fenster
@@ -42,49 +46,200 @@ function createWindow() {
 }
 
 function startServer() {
-  // Starte den Backend-Server
-  let serverPath;
-  
+  // Im Entwicklungsmodus den Server als separaten Prozess starten
   if (isDev) {
-    serverPath = path.join(__dirname, '../server.js');
-  } else {
-    // In der Produktionsversion ist die server.js im Hauptverzeichnis
-    serverPath = path.join(app.getAppPath(), 'server.js');
+    const serverPath = path.join(__dirname, '../server.js');
+    console.log('Server-Pfad (Dev):', serverPath);
     
-    // Fallback, wenn der Pfad nicht existiert
-    if (!fs.existsSync(serverPath)) {
-      serverPath = path.join(process.resourcesPath, 'app', 'server.js');
+    if (fs.existsSync(serverPath)) {
+      console.log('Starte Server als separaten Prozess...');
+      serverProcess = spawn('node', [serverPath], {
+        stdio: 'inherit',
+        env: process.env
+      });
+      
+      serverProcess.on('error', (error) => {
+        console.error('Server-Fehler:', error);
+        dialog.showErrorBox('Server-Fehler', `Der Server konnte nicht gestartet werden: ${error.message}`);
+      });
+    } else {
+      console.error('Server-Datei nicht gefunden:', serverPath);
+      dialog.showErrorBox('Server-Fehler', `Die Server-Datei wurde nicht gefunden: ${serverPath}`);
     }
+    return;
   }
   
-  console.log('Server-Pfad:', serverPath);
+  // Im Produktionsmodus den Server direkt einbinden
+  console.log('Starte eingebetteten Server...');
   
-  if (fs.existsSync(serverPath)) {
-    console.log('Starte Server...');
+  try {
+    // Express-Server erstellen
+    const expressApp = express();
+    const PORT = process.env.PORT || 3001;
     
-    // Setze den Pfad für die Bilder
-    process.env.IMAGES_PATH = isDev 
-      ? path.join(__dirname, '../images') 
-      : path.join(process.resourcesPath, 'images');
+    // CORS für Entwicklung aktivieren
+    expressApp.use(cors());
     
-    // Setze die Umgebungsvariable für den Produktionsmodus
-    process.env.NODE_ENV = isDev ? 'development' : 'production';
+    // Bestimme den Pfad zum Bilder-Verzeichnis
+    const imagesPath = process.env.IMAGES_PATH || path.join(process.resourcesPath, 'images');
+    console.log('Bilder-Verzeichnis:', imagesPath);
     
-    console.log('Bilder-Pfad:', process.env.IMAGES_PATH);
-    console.log('NODE_ENV:', process.env.NODE_ENV);
+    // Statische Dateien bereitstellen
+    expressApp.use('/images', express.static(imagesPath));
     
-    serverProcess = spawn('node', [serverPath], {
-      stdio: 'inherit',
-      env: process.env
+    // Überprüfe, ob das Bilder-Verzeichnis existiert
+    if (!fs.existsSync(imagesPath)) {
+      console.error(`Fehler: Das Bilder-Verzeichnis existiert nicht: ${imagesPath}`);
+      fs.mkdirSync(imagesPath, { recursive: true });
+      console.log(`Bilder-Verzeichnis wurde erstellt: ${imagesPath}`);
+    }
+    
+    // API-Endpunkt für Foto-Metadaten
+    expressApp.get('/api/photos', (req, res) => {
+      console.log('API-Anfrage für Fotos erhalten');
+      
+      try {
+        // Lese alle Dateien im Bilder-Verzeichnis
+        const files = fs.readdirSync(imagesPath);
+        const imageFiles = files.filter(file => {
+          const ext = path.extname(file).toLowerCase();
+          return ['.jpg', '.jpeg', '.png', '.gif'].includes(ext);
+        });
+        
+        console.log(`${imageFiles.length} Bilddateien gefunden`);
+        
+        // Extrahiere GPS-Daten mit Python-Skript
+        const pythonScript = `
+import os
+import json
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+
+def get_exif_data(image):
+    exif_data = {}
+    try:
+        img = Image.open(image)
+        if hasattr(img, '_getexif'):
+            exif = img._getexif()
+            if exif:
+                for tag, value in exif.items():
+                    decoded = TAGS.get(tag, tag)
+                    exif_data[decoded] = value
+    except Exception as e:
+        print(f"Fehler beim Lesen der EXIF-Daten: {e}")
+    return exif_data
+
+def get_gps_info(exif_data):
+    gps_info = {}
+    if 'GPSInfo' in exif_data:
+        for key, value in exif_data['GPSInfo'].items():
+            decoded = GPSTAGS.get(key, key)
+            gps_info[decoded] = value
+    return gps_info
+
+def get_decimal_coordinates(gps_info):
+    if not gps_info or 'GPSLatitude' not in gps_info or 'GPSLongitude' not in gps_info:
+        return None, None
+
+    lat = gps_info['GPSLatitude']
+    lat_ref = gps_info.get('GPSLatitudeRef', 'N')
+    lng = gps_info['GPSLongitude']
+    lng_ref = gps_info.get('GPSLongitudeRef', 'E')
+
+    lat_decimal = lat[0] + lat[1]/60 + lat[2]/3600
+    if lat_ref == 'S':
+        lat_decimal = -lat_decimal
+
+    lng_decimal = lng[0] + lng[1]/60 + lng[2]/3600
+    if lng_ref == 'W':
+        lng_decimal = -lng_decimal
+
+    return lat_decimal, lng_decimal
+
+def process_images(directory):
+    results = []
+    for filename in os.listdir(directory):
+        if filename.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+            filepath = os.path.join(directory, filename)
+            exif_data = get_exif_data(filepath)
+            gps_info = get_gps_info(exif_data)
+            lat, lng = get_decimal_coordinates(gps_info)
+            
+            if lat is not None and lng is not None:
+                results.append({
+                    'filename': filename,
+                    'path': f'/images/{filename}',
+                    'latitude': lat,
+                    'longitude': lng
+                })
+    return results
+
+# Hauptfunktion
+images_dir = '${imagesPath.replace(/\\/g, '\\\\')}'
+photo_data = process_images(images_dir)
+print(json.dumps(photo_data))
+        `;
+        
+        // Temporäre Python-Datei erstellen
+        const tempPyFile = path.join(app.getPath('temp'), 'temp_extract_gps.py');
+        fs.writeFileSync(tempPyFile, pythonScript);
+        
+        // Python-Skript ausführen
+        exec(`python ${tempPyFile}`, (error, stdout, stderr) => {
+          // Temporäre Datei löschen
+          try {
+            fs.unlinkSync(tempPyFile);
+          } catch (err) {
+            console.error('Fehler beim Löschen der temporären Python-Datei:', err);
+          }
+          
+          if (error) {
+            console.error(`Fehler bei der Ausführung des Python-Skripts: ${error.message}`);
+            console.error(`stderr: ${stderr}`);
+            return res.status(500).json({ error: 'Fehler bei der Verarbeitung der Bilder' });
+          }
+          
+          try {
+            const photoData = JSON.parse(stdout);
+            console.log(`${photoData.length} Fotos mit GPS-Daten gefunden`);
+            res.json(photoData);
+          } catch (parseError) {
+            console.error('Fehler beim Parsen der Python-Ausgabe:', parseError);
+            console.error('Python-Ausgabe:', stdout);
+            res.status(500).json({ error: 'Fehler beim Parsen der Metadaten' });
+          }
+        });
+      } catch (err) {
+        console.error('Fehler beim Verarbeiten der Anfrage:', err);
+        res.status(500).json({ error: err.message });
+      }
     });
     
-    serverProcess.on('error', (error) => {
-      console.error('Server-Fehler:', error);
-      dialog.showErrorBox('Server-Fehler', `Der Server konnte nicht gestartet werden: ${error.message}`);
+    // Statische Dateien aus dem Build-Verzeichnis bereitstellen
+    const buildPath = path.join(__dirname, '../build');
+    console.log('Build-Verzeichnis:', buildPath);
+    
+    if (fs.existsSync(buildPath)) {
+      expressApp.use(express.static(buildPath));
+      
+      expressApp.get('*', (req, res) => {
+        res.sendFile(path.join(buildPath, 'index.html'));
+      });
+      
+      console.log('Build-Verzeichnis gefunden und konfiguriert');
+    } else {
+      console.warn(`Warnung: Build-Verzeichnis existiert nicht: ${buildPath}`);
+    }
+    
+    // Server starten
+    server = expressApp.listen(PORT, () => {
+      console.log(`Server läuft auf Port ${PORT}`);
+      console.log(`API-Endpunkt: http://localhost:${PORT}/api/photos`);
+      console.log(`Bilder-Verzeichnis: ${imagesPath}`);
     });
-  } else {
-    console.error('Server-Datei nicht gefunden:', serverPath);
-    dialog.showErrorBox('Server-Fehler', `Die Server-Datei wurde nicht gefunden: ${serverPath}`);
+  } catch (error) {
+    console.error('Fehler beim Starten des eingebetteten Servers:', error);
+    dialog.showErrorBox('Server-Fehler', `Der eingebettete Server konnte nicht gestartet werden: ${error.message}`);
   }
 }
 
@@ -95,6 +250,8 @@ app.on('ready', () => {
   
   if (!isDev) {
     console.log('Ressourcen-Pfad:', process.resourcesPath);
+    // Setze die Umgebungsvariable für den Produktionsmodus
+    process.env.NODE_ENV = 'production';
   }
   
   startServer();
@@ -118,5 +275,10 @@ app.on('will-quit', () => {
   if (serverProcess) {
     console.log('Beende Server-Prozess...');
     serverProcess.kill();
+  }
+  
+  if (server) {
+    console.log('Beende eingebetteten Server...');
+    server.close();
   }
 }); 
