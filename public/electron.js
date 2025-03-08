@@ -3,11 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
-const { exiftool } = require('exiftool-vendored');
+const { ExifTool } = require('exiftool-vendored');
 
 let mainWindow;
 let server;
 let selectedImagesPath = null;
+let exiftool; // ExifTool-Instanz
 
 // Pfade
 const isDev = process.env.NODE_ENV === 'development';
@@ -35,16 +36,51 @@ const FALLBACK_PHOTOS = [
   }
 ];
 
+// ExifTool initialisieren
+function initExifTool() {
+  if (!exiftool) {
+    console.log('ExifTool wird initialisiert...');
+    exiftool = new ExifTool({ taskTimeoutMillis: 5000 });
+  }
+  return exiftool;
+}
+
 // GPS-Extraktion
 async function extractGpsData(imagePath) {
   try {
-    const metadata = await exiftool.read(imagePath);
+    console.log(`Extrahiere GPS-Daten aus: ${imagePath}`);
+    const et = initExifTool();
+    const metadata = await et.read(imagePath);
     
+    console.log('Extrahierte Metadaten:', JSON.stringify(metadata, null, 2));
+    
+    // Überprüfen auf verschiedene GPS-Felder
     if (metadata.GPSLatitude !== undefined && metadata.GPSLongitude !== undefined) {
+      console.log(`GPS-Daten gefunden: ${metadata.GPSLatitude}, ${metadata.GPSLongitude}`);
       return {
         latitude: metadata.GPSLatitude,
         longitude: metadata.GPSLongitude
       };
+    }
+    
+    // Alternative Felder probieren
+    if (metadata.Latitude !== undefined && metadata.Longitude !== undefined) {
+      console.log(`Alternative GPS-Daten gefunden: ${metadata.Latitude}, ${metadata.Longitude}`);
+      return {
+        latitude: metadata.Latitude,
+        longitude: metadata.Longitude
+      };
+    }
+    
+    // Versuche, die Daten aus GPSPosition zu extrahieren
+    if (metadata.GPSPosition) {
+      const posMatch = metadata.GPSPosition.match(/([+-]?\d+\.\d+)[,\s]+([+-]?\d+\.\d+)/);
+      if (posMatch && posMatch.length >= 3) {
+        const lat = parseFloat(posMatch[1]);
+        const lng = parseFloat(posMatch[2]);
+        console.log(`GPS-Position extrahiert: ${lat}, ${lng}`);
+        return { latitude: lat, longitude: lng };
+      }
     }
     
     console.log(`Keine GPS-Daten gefunden in ${imagePath}`);
@@ -156,10 +192,34 @@ function startServer() {
         return res.json(FALLBACK_PHOTOS);
       }
       
-      res.json(photosWithGps);
+      res.json(photosWithGps.concat(photosWithoutGps.map(photo => ({
+        ...photo,
+        // Fallback-Koordinaten für Fotos ohne GPS
+        latitude: 50.0 + Math.random() * 2,
+        longitude: 10.0 + Math.random() * 2
+      }))));
     } catch (err) {
       console.error('Fehler beim Verarbeiten der Anfrage:', err);
       res.json(FALLBACK_PHOTOS);
+    }
+  });
+  
+  // Debug-Endpunkt für Metadaten
+  expressApp.get('/api/metadata/:filename', async (req, res) => {
+    try {
+      const filename = req.params.filename;
+      const filePath = path.join(imagesPath, filename);
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Datei nicht gefunden' });
+      }
+      
+      const et = initExifTool();
+      const metadata = await et.read(filePath);
+      res.json(metadata);
+    } catch (err) {
+      console.error('Fehler beim Lesen der Metadaten:', err);
+      res.status(500).json({ error: err.message });
     }
   });
   
@@ -287,6 +347,28 @@ function createWindow() {
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
+    },
+    {
+      label: 'Debug',
+      submenu: [
+        {
+          label: 'ExifTool neu initialisieren',
+          click: () => {
+            if (exiftool) {
+              exiftool.end().then(() => {
+                exiftool = null;
+                initExifTool();
+                console.log('ExifTool wurde neu initialisiert');
+                if (mainWindow) {
+                  mainWindow.webContents.send('exiftool-reinitialized');
+                }
+              }).catch(err => {
+                console.error('Fehler beim Beenden von ExifTool:', err);
+              });
+            }
+          }
+        }
+      ]
     }
   ];
   
@@ -304,6 +386,9 @@ app.on('ready', async () => {
   console.log('App bereit zum Starten');
   
   try {
+    // ExifTool initialisieren
+    initExifTool();
+    
     // Starte den Server
     await startServer();
     
@@ -331,8 +416,10 @@ app.on('activate', () => {
 app.on('will-quit', async () => {
   // Beende ExifTool
   try {
-    await exiftool.end();
-    console.log('ExifTool beendet');
+    if (exiftool) {
+      await exiftool.end();
+      console.log('ExifTool beendet');
+    }
   } catch (err) {
     console.error('Fehler beim Beenden von ExifTool:', err);
   }

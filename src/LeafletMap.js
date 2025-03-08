@@ -40,6 +40,7 @@ function LeafletMap() {
   const [error, setError] = useState(null);
   const [directoryInfo, setDirectoryInfo] = useState({ currentPath: null, isDefault: true });
   const [noGpsPhotos, setNoGpsPhotos] = useState([]);
+  const [mapKey, setMapKey] = useState(Date.now()); // Key für Map-Neuladen
   
   // Statischer Deutschland-Mittelpunkt
   const center = [51.1657, 10.4515];
@@ -77,6 +78,8 @@ function LeafletMap() {
       if (photosWithGps.length > 0) {
         setPhotos(photosWithGps);
         setNoGpsPhotos(photosWithoutGps);
+        // Map neu laden mit neuem Key
+        setMapKey(Date.now());
       } else {
         console.log("Keine Fotos mit GPS-Daten gefunden, verwende Fallback-Daten");
         setPhotos(FALLBACK_PHOTOS);
@@ -103,6 +106,27 @@ function LeafletMap() {
     }
   };
   
+  // Metadaten anzeigen
+  const showMetadata = (filename) => {
+    if (!filename) return;
+    
+    fetch(`http://localhost:3001/api/metadata/${encodeURIComponent(filename)}`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server-Fehler: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log("Metadaten für", filename, ":", data);
+        alert(`Metadaten für ${filename}:\n${JSON.stringify(data, null, 2)}`);
+      })
+      .catch(err => {
+        console.error("Fehler beim Laden der Metadaten:", err);
+        alert(`Fehler beim Laden der Metadaten: ${err.message}`);
+      });
+  };
+  
   // Höre auf Verzeichnisänderungen
   useEffect(() => {
     const handleDirectoryChange = (event, data) => {
@@ -114,15 +138,23 @@ function LeafletMap() {
       refreshPhotos();
     };
     
-    // Registriere Event-Listener für Verzeichnisänderungen
+    // Event-Listener für ExifTool-Neuinitialisierung
+    const handleExifToolReinitialized = () => {
+      console.log('ExifTool wurde neu initialisiert, lade Fotos neu');
+      refreshPhotos();
+    };
+    
+    // Registriere Event-Listener
     if (window.electron) {
       window.electron.receive('directory-changed', handleDirectoryChange);
+      window.electron.receive('exiftool-reinitialized', handleExifToolReinitialized);
     }
     
-    // Bereinige den Event-Listener
+    // Bereinige die Event-Listener
     return () => {
       if (window.electron) {
         window.electron.removeAllListeners('directory-changed');
+        window.electron.removeAllListeners('exiftool-reinitialized');
       }
     };
   }, []);
@@ -141,7 +173,7 @@ function LeafletMap() {
     return (
       <div className="loading-container">
         <div className="loading-spinner"></div>
-        <p>Lade Karte...</p>
+        <p>Lade Fotos und Karte...</p>
       </div>
     );
   }
@@ -167,6 +199,7 @@ function LeafletMap() {
       </div>
       
       <MapContainer
+        key={mapKey} // Wichtig: Mit neuem Key wird die Map komplett neu geladen
         center={center}
         zoom={6}
         style={{ height: "100%", width: "100%" }}
@@ -178,17 +211,19 @@ function LeafletMap() {
         
         {photos.map((photo, index) => (
           <Marker
-            key={index}
+            key={`${photo.filename}-${index}`}
             position={[photo.latitude, photo.longitude]}
           >
             <Popup>
               <div className="popup-content">
                 <h3>{photo.filename}</h3>
-                <p>Koordinaten: {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}</p>
+                <p>Koordinaten: {photo.latitude.toFixed(6)}, {photo.longitude.toFixed(6)}</p>
                 <div className="popup-image-container">
                   <img 
                     src={photo.path} 
                     alt={photo.filename}
+                    onClick={() => showMetadata(photo.filename)}
+                    title="Klicken, um Metadaten anzuzeigen"
                     onError={(e) => {
                       e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
                       e.target.style.width = "150px";
@@ -196,6 +231,12 @@ function LeafletMap() {
                     }}
                   />
                 </div>
+                <button 
+                  className="metadata-button"
+                  onClick={() => showMetadata(photo.filename)}
+                >
+                  Metadaten anzeigen
+                </button>
               </div>
             </Popup>
           </Marker>
@@ -218,6 +259,8 @@ function LeafletMap() {
                 <img 
                   src={photo.path} 
                   alt={photo.filename}
+                  title={photo.filename}
+                  onClick={() => showMetadata(photo.filename)}
                   onError={(e) => {
                     e.target.src = "https://via.placeholder.com/50x50?text=Fehler";
                   }}
