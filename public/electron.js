@@ -3,12 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
-const { ExifTool } = require('exiftool-vendored');
+const { spawn } = require('child_process');
 
 let mainWindow;
 let server;
 let selectedImagesPath = null;
-let exiftool; // ExifTool-Instanz
 
 // Pfade
 const isDev = process.env.NODE_ENV === 'development';
@@ -36,59 +35,169 @@ const FALLBACK_PHOTOS = [
   }
 ];
 
-// ExifTool initialisieren
-function initExifTool() {
-  if (!exiftool) {
-    console.log('ExifTool wird initialisiert...');
-    exiftool = new ExifTool({ taskTimeoutMillis: 5000 });
-  }
-  return exiftool;
+// Einfache Python-basierte GPS-Extraktion
+async function extractGpsDataWithPython(imagePath, imagesPath) {
+  return new Promise((resolve, reject) => {
+    // Erstelle ein temporäres Python-Skript
+    const pythonScript = `
+import sys
+import json
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+
+def get_exif_data(image_path):
+    try:
+        img = Image.open(image_path)
+        exif_data = {}
+        if hasattr(img, '_getexif'):
+            exif = img._getexif()
+            if exif:
+                for tag, value in exif.items():
+                    decoded = TAGS.get(tag, tag)
+                    exif_data[decoded] = value
+        return exif_data
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        return {}
+
+def get_gps_info(exif_data):
+    gps_info = {}
+    if 'GPSInfo' in exif_data:
+        for key, value in exif_data['GPSInfo'].items():
+            decoded = GPSTAGS.get(key, key)
+            gps_info[decoded] = value
+    return gps_info
+
+def get_decimal_coordinates(gps_info):
+    if not gps_info or 'GPSLatitude' not in gps_info or 'GPSLongitude' not in gps_info:
+        return None, None
+
+    try:
+        lat = gps_info['GPSLatitude']
+        lat_ref = gps_info.get('GPSLatitudeRef', 'N')
+        lng = gps_info['GPSLongitude']
+        lng_ref = gps_info.get('GPSLongitudeRef', 'E')
+
+        lat_decimal = lat[0] + lat[1]/60 + lat[2]/3600
+        if lat_ref == 'S':
+            lat_decimal = -lat_decimal
+
+        lng_decimal = lng[0] + lng[1]/60 + lng[2]/3600
+        if lng_ref == 'W':
+            lng_decimal = -lng_decimal
+
+        return lat_decimal, lng_decimal
+    except Exception as e:
+        print(f"Error converting coordinates: {str(e)}", file=sys.stderr)
+        return None, None
+
+image_path = "${imagePath.replace(/\\/g, '\\\\')}"
+exif_data = get_exif_data(image_path)
+gps_info = get_gps_info(exif_data)
+lat, lng = get_decimal_coordinates(gps_info)
+
+result = {
+    "success": lat is not None and lng is not None,
+    "latitude": lat,
+    "longitude": lng,
+    "raw_exif": str(exif_data)
 }
 
-// GPS-Extraktion
-async function extractGpsData(imagePath) {
-  try {
-    console.log(`Extrahiere GPS-Daten aus: ${imagePath}`);
-    const et = initExifTool();
-    const metadata = await et.read(imagePath);
+print(json.dumps(result))
+    `;
     
-    console.log('Extrahierte Metadaten:', JSON.stringify(metadata, null, 2));
+    // Speichere das Skript in einer temporären Datei
+    const tempDir = app.getPath('temp');
+    const tempFile = path.join(tempDir, 'extract_gps.py');
+    fs.writeFileSync(tempFile, pythonScript);
     
-    // Überprüfen auf verschiedene GPS-Felder
-    if (metadata.GPSLatitude !== undefined && metadata.GPSLongitude !== undefined) {
-      console.log(`GPS-Daten gefunden: ${metadata.GPSLatitude}, ${metadata.GPSLongitude}`);
-      return {
-        latitude: metadata.GPSLatitude,
-        longitude: metadata.GPSLongitude
-      };
-    }
+    // Führe das Python-Skript aus
+    const pythonProcess = spawn('python', [tempFile]);
     
-    // Alternative Felder probieren
-    if (metadata.Latitude !== undefined && metadata.Longitude !== undefined) {
-      console.log(`Alternative GPS-Daten gefunden: ${metadata.Latitude}, ${metadata.Longitude}`);
-      return {
-        latitude: metadata.Latitude,
-        longitude: metadata.Longitude
-      };
-    }
+    let dataString = '';
+    let errorString = '';
     
-    // Versuche, die Daten aus GPSPosition zu extrahieren
-    if (metadata.GPSPosition) {
-      const posMatch = metadata.GPSPosition.match(/([+-]?\d+\.\d+)[,\s]+([+-]?\d+\.\d+)/);
-      if (posMatch && posMatch.length >= 3) {
-        const lat = parseFloat(posMatch[1]);
-        const lng = parseFloat(posMatch[2]);
-        console.log(`GPS-Position extrahiert: ${lat}, ${lng}`);
-        return { latitude: lat, longitude: lng };
+    pythonProcess.stdout.on('data', (data) => {
+      dataString += data.toString();
+    });
+    
+    pythonProcess.stderr.on('data', (data) => {
+      errorString += data.toString();
+    });
+    
+    pythonProcess.on('close', (code) => {
+      // Lösche das temporäre Skript
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (err) {
+        console.error('Fehler beim Löschen der temporären Datei:', err);
       }
-    }
-    
-    console.log(`Keine GPS-Daten gefunden in ${imagePath}`);
-    return null;
-  } catch (error) {
-    console.error(`Fehler bei der Extraktion von GPS-Daten aus ${imagePath}:`, error);
-    return null;
-  }
+      
+      if (code !== 0) {
+        console.error(`Python-Skript beendet mit Code ${code}`);
+        console.error(`Fehler: ${errorString}`);
+        
+        // Versuche es mit python3
+        const python3Process = spawn('python3', [tempFile]);
+        
+        let python3Data = '';
+        let python3Error = '';
+        
+        python3Process.stdout.on('data', (data) => {
+          python3Data += data.toString();
+        });
+        
+        python3Process.stderr.on('data', (data) => {
+          python3Error += data.toString();
+        });
+        
+        python3Process.on('close', (code) => {
+          if (code !== 0) {
+            console.error(`Python3-Skript beendet mit Code ${code}`);
+            console.error(`Fehler: ${python3Error}`);
+            resolve(null);
+            return;
+          }
+          
+          try {
+            const result = JSON.parse(python3Data);
+            if (result.success) {
+              resolve({
+                latitude: result.latitude,
+                longitude: result.longitude
+              });
+            } else {
+              console.log(`Keine GPS-Daten in ${imagePath} gefunden`);
+              resolve(null);
+            }
+          } catch (err) {
+            console.error('Fehler beim Parsen der Python3-Ausgabe:', err);
+            console.error('Python3-Ausgabe:', python3Data);
+            resolve(null);
+          }
+        });
+        
+        return;
+      }
+      
+      try {
+        const result = JSON.parse(dataString);
+        if (result.success) {
+          resolve({
+            latitude: result.latitude,
+            longitude: result.longitude
+          });
+        } else {
+          console.log(`Keine GPS-Daten in ${imagePath} gefunden`);
+          resolve(null);
+        }
+      } catch (err) {
+        console.error('Fehler beim Parsen der Python-Ausgabe:', err);
+        console.error('Python-Ausgabe:', dataString);
+        resolve(null);
+      }
+    });
+  });
 }
 
 // Starte den Server
@@ -158,7 +267,7 @@ function startServer() {
         const filePath = path.join(imagesPath, filename);
         
         try {
-          const gpsData = await extractGpsData(filePath);
+          const gpsData = await extractGpsDataWithPython(filePath, imagesPath);
           
           if (gpsData) {
             photosWithGps.push({
@@ -192,34 +301,11 @@ function startServer() {
         return res.json(FALLBACK_PHOTOS);
       }
       
-      res.json(photosWithGps.concat(photosWithoutGps.map(photo => ({
-        ...photo,
-        // Fallback-Koordinaten für Fotos ohne GPS
-        latitude: 50.0 + Math.random() * 2,
-        longitude: 10.0 + Math.random() * 2
-      }))));
+      // Sende alle Fotos mit GPS-Daten zurück
+      res.json(photosWithGps);
     } catch (err) {
       console.error('Fehler beim Verarbeiten der Anfrage:', err);
       res.json(FALLBACK_PHOTOS);
-    }
-  });
-  
-  // Debug-Endpunkt für Metadaten
-  expressApp.get('/api/metadata/:filename', async (req, res) => {
-    try {
-      const filename = req.params.filename;
-      const filePath = path.join(imagesPath, filename);
-      
-      if (!fs.existsSync(filePath)) {
-        return res.status(404).json({ error: 'Datei nicht gefunden' });
-      }
-      
-      const et = initExifTool();
-      const metadata = await et.read(filePath);
-      res.json(metadata);
-    } catch (err) {
-      console.error('Fehler beim Lesen der Metadaten:', err);
-      res.status(500).json({ error: err.message });
     }
   });
   
@@ -347,28 +433,6 @@ function createWindow() {
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
-    },
-    {
-      label: 'Debug',
-      submenu: [
-        {
-          label: 'ExifTool neu initialisieren',
-          click: () => {
-            if (exiftool) {
-              exiftool.end().then(() => {
-                exiftool = null;
-                initExifTool();
-                console.log('ExifTool wurde neu initialisiert');
-                if (mainWindow) {
-                  mainWindow.webContents.send('exiftool-reinitialized');
-                }
-              }).catch(err => {
-                console.error('Fehler beim Beenden von ExifTool:', err);
-              });
-            }
-          }
-        }
-      ]
     }
   ];
   
@@ -386,9 +450,6 @@ app.on('ready', async () => {
   console.log('App bereit zum Starten');
   
   try {
-    // ExifTool initialisieren
-    initExifTool();
-    
     // Starte den Server
     await startServer();
     
@@ -413,17 +474,7 @@ app.on('activate', () => {
   }
 });
 
-app.on('will-quit', async () => {
-  // Beende ExifTool
-  try {
-    if (exiftool) {
-      await exiftool.end();
-      console.log('ExifTool beendet');
-    }
-  } catch (err) {
-    console.error('Fehler beim Beenden von ExifTool:', err);
-  }
-  
+app.on('will-quit', () => {
   // Beende den Server
   if (server) {
     server.close();

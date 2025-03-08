@@ -1,282 +1,319 @@
-import React, { useState, useEffect } from "react";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
-import L from "leaflet";
+import React, { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, LayersControl } from 'react-leaflet';
+import MarkerClusterGroup from 'react-leaflet-cluster';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import './LeafletMap.css';
 
-// Korrigiere das Icon-Problem in Leaflet
+// Korrigiere die Icon-URLs
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png"
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// Hartcodierte Daten als Fallback
-const FALLBACK_PHOTOS = [
-  {
-    filename: 'beispiel1.jpg',
-    path: '/images/beispiel1.jpg', 
-    latitude: 52.520008,
-    longitude: 13.404954
-  },
-  {
-    filename: 'beispiel2.jpg',
-    path: '/images/beispiel2.jpg',
-    latitude: 48.135125,
-    longitude: 11.581981
-  },
-  {
-    filename: 'beispiel3.jpg',
-    path: '/images/beispiel3.jpg',
-    latitude: 50.110924,
-    longitude: 8.682127
-  }
-];
+// Layer-Auswahl-Komponente
+function ChangeMapLayer({ activeMapType, setActiveMapType }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const baseLayers = {
+      'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }),
+      'Satellite': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+      }),
+      'Topographic': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+        attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+      })
+    };
+
+    // Entferne alle vorhandenen Layer
+    map.eachLayer(layer => {
+      if (layer instanceof L.TileLayer) {
+        map.removeLayer(layer);
+      }
+    });
+
+    // Füge den ausgewählten Layer hinzu
+    baseLayers[activeMapType].addTo(map);
+
+  }, [map, activeMapType]);
+
+  return (
+    <div className="map-type-selector">
+      <button 
+        className={activeMapType === 'OpenStreetMap' ? 'active' : ''}
+        onClick={() => setActiveMapType('OpenStreetMap')}
+      >
+        OpenStreetMap
+      </button>
+      <button 
+        className={activeMapType === 'Satellite' ? 'active' : ''}
+        onClick={() => setActiveMapType('Satellite')}
+      >
+        Satellit
+      </button>
+      <button 
+        className={activeMapType === 'Topographic' ? 'active' : ''}
+        onClick={() => setActiveMapType('Topographic')}
+      >
+        Topografisch
+      </button>
+    </div>
+  );
+}
 
 function LeafletMap() {
-  const [photos, setPhotos] = useState(FALLBACK_PHOTOS);
+  const [photos, setPhotos] = useState([]);
+  const [directoryInfo, setDirectoryInfo] = useState({ currentPath: '', isDefault: true });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [directoryInfo, setDirectoryInfo] = useState({ currentPath: null, isDefault: true });
-  const [noGpsPhotos, setNoGpsPhotos] = useState([]);
-  const [mapKey, setMapKey] = useState(Date.now()); // Key für Map-Neuladen
-  
-  // Statischer Deutschland-Mittelpunkt
-  const center = [51.1657, 10.4515];
-  
-  // Laden der Verzeichnisinformationen
+  const [activeMapType, setActiveMapType] = useState('OpenStreetMap');
+  const [fullscreenImage, setFullscreenImage] = useState(null);
+  const [mapKey, setMapKey] = useState(Date.now()); // Erzwingt Map-Neuzeichnung
+  const [debugInfo, setDebugInfo] = useState(null);
+  const [showDebug, setShowDebug] = useState(false);
+  const mapRef = useRef(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
+
   const loadDirectoryInfo = async () => {
     try {
+      console.log('Lade Verzeichnis-Info...');
       const response = await fetch('http://localhost:3001/api/directory-info');
-      if (response.ok) {
-        const data = await response.json();
-        setDirectoryInfo(data);
-      }
-    } catch (err) {
-      console.error("Fehler beim Laden der Verzeichnisinformationen:", err);
+      if (!response.ok) throw new Error(`HTTP Fehler! Status: ${response.status}`);
+      const data = await response.json();
+      console.log('Verzeichnis-Info geladen:', data);
+      setDirectoryInfo(data);
+      return data;
+    } catch (error) {
+      console.error('Fehler beim Laden der Verzeichnis-Info:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        directoryInfoError: error.message
+      }));
+      return null;
     }
   };
-  
-  // Lade Fotos neu
+
   const refreshPhotos = async () => {
     setLoading(true);
+    setError(null);
+    setDebugInfo(null);
+    
     try {
-      console.log("Versuche, Fotos vom Server zu laden...");
+      console.log('Lade Fotos...');
       const response = await fetch('http://localhost:3001/api/photos');
+      
       if (!response.ok) {
-        throw new Error(`Server-Fehler: ${response.status}`);
+        throw new Error(`HTTP Fehler! Status: ${response.status}`);
       }
       
       const data = await response.json();
-      console.log("Geladene Fotos:", data);
+      console.log('Fotos geladen:', data);
       
-      // Filtere Fotos mit und ohne GPS-Daten
-      const photosWithGps = data.filter(photo => !photo.hasNoGps);
-      const photosWithoutGps = data.filter(photo => photo.hasNoGps);
-      
-      if (photosWithGps.length > 0) {
-        setPhotos(photosWithGps);
-        setNoGpsPhotos(photosWithoutGps);
-        // Map neu laden mit neuem Key
-        setMapKey(Date.now());
+      if (data && data.length > 0) {
+        setPhotos(data);
+        setMapKey(Date.now()); // Erzwingt Neuzeichnung der Karte
+        
+        // Sammle Debug-Informationen
+        setDebugInfo({
+          photosLoaded: data.length,
+          photosWithCoordinates: data.filter(p => p.latitude && p.longitude).length,
+          photosWithoutCoordinates: data.filter(p => !p.latitude || !p.longitude).length,
+          samplePhoto: data[0],
+          timestamp: new Date().toISOString()
+        });
       } else {
-        console.log("Keine Fotos mit GPS-Daten gefunden, verwende Fallback-Daten");
-        setPhotos(FALLBACK_PHOTOS);
-        setNoGpsPhotos(photosWithoutGps);
+        console.warn('Keine Fotos gefunden oder leeres Array zurückgegeben');
+        setPhotos([]);
+        
+        // Wenn wir noch nicht zu oft versucht haben, versuchen wir es erneut
+        if (retryCount < maxRetries) {
+          console.log(`Versuch ${retryCount + 1}/${maxRetries}. Neuer Versuch in 2 Sekunden...`);
+          setRetryCount(prev => prev + 1);
+          setTimeout(refreshPhotos, 2000);
+          return;
+        } else {
+          throw new Error('Keine Fotos mit GPS-Daten gefunden nach mehreren Versuchen.');
+        }
       }
-      setError(null);
-    } catch (err) {
-      console.error("Fehler beim Laden der Fotos:", err);
-      setError(err.message);
-      setPhotos(FALLBACK_PHOTOS);
-      setNoGpsPhotos([]);
+    } catch (error) {
+      console.error('Fehler beim Laden der Fotos:', error);
+      setError(`Fehler beim Laden der Fotos: ${error.message}`);
+      setDebugInfo(prev => ({
+        ...prev,
+        error: error.message,
+        stack: error.stack
+      }));
     } finally {
       setLoading(false);
     }
   };
-  
-  // Verzeichnis auswählen
+
   const handleSelectDirectory = () => {
-    if (window.electron) {
-      window.electron.send('select-directory');
-    } else {
-      // Fallback für Browser-Umgebung
-      alert('Diese Funktion ist nur in der Desktop-App verfügbar.');
+    window.electron.ipcRenderer.send('select-directory');
+  };
+
+  const handleDirectoryChange = (event, data) => {
+    console.log('Verzeichnis geändert:', data);
+    setDirectoryInfo(data);
+    refreshPhotos();
+  };
+
+  const initializeApp = async () => {
+    const dirInfo = await loadDirectoryInfo();
+    if (dirInfo) {
+      await refreshPhotos();
     }
   };
-  
-  // Metadaten anzeigen
-  const showMetadata = (filename) => {
-    if (!filename) return;
-    
-    fetch(`http://localhost:3001/api/metadata/${encodeURIComponent(filename)}`)
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`Server-Fehler: ${response.status}`);
-        }
-        return response.json();
-      })
-      .then(data => {
-        console.log("Metadaten für", filename, ":", data);
-        alert(`Metadaten für ${filename}:\n${JSON.stringify(data, null, 2)}`);
-      })
-      .catch(err => {
-        console.error("Fehler beim Laden der Metadaten:", err);
-        alert(`Fehler beim Laden der Metadaten: ${err.message}`);
-      });
-  };
-  
-  // Höre auf Verzeichnisänderungen
+
   useEffect(() => {
-    const handleDirectoryChange = (event, data) => {
-      console.log('Verzeichnisänderung erkannt:', data);
-      setDirectoryInfo({
-        currentPath: data.path,
-        isDefault: data.isDefault
-      });
-      refreshPhotos();
-    };
+    console.log('LeafletMap komponente initialisiert');
     
-    // Event-Listener für ExifTool-Neuinitialisierung
-    const handleExifToolReinitialized = () => {
-      console.log('ExifTool wurde neu initialisiert, lade Fotos neu');
-      refreshPhotos();
-    };
-    
-    // Registriere Event-Listener
-    if (window.electron) {
-      window.electron.receive('directory-changed', handleDirectoryChange);
-      window.electron.receive('exiftool-reinitialized', handleExifToolReinitialized);
+    // IPC-Listener einrichten
+    if (window.electron && window.electron.ipcRenderer) {
+      window.electron.ipcRenderer.on('directory-changed', handleDirectoryChange);
     }
     
-    // Bereinige die Event-Listener
+    initializeApp();
+    
+    // Cleanup bei Unmount
     return () => {
-      if (window.electron) {
-        window.electron.removeAllListeners('directory-changed');
-        window.electron.removeAllListeners('exiftool-reinitialized');
+      if (window.electron && window.electron.ipcRenderer) {
+        window.electron.ipcRenderer.removeListener('directory-changed', handleDirectoryChange);
       }
     };
   }, []);
-  
-  // Initialer Ladevorgang
-  useEffect(() => {
-    const initializeApp = async () => {
-      await loadDirectoryInfo();
-      await refreshPhotos();
-    };
+
+  const openFullscreen = (imagePath) => {
+    setFullscreenImage(imagePath);
+  };
+
+  const closeFullscreen = () => {
+    setFullscreenImage(null);
+  };
+
+  // Berechne das Zentrum der Karte basierend auf den Fotos
+  const getMapCenter = () => {
+    if (photos.length === 0 || !photos.some(p => p.latitude && p.longitude)) {
+      return [51.1657, 10.4515]; // Deutschland-Zentrum als Fallback
+    }
+
+    const validPhotos = photos.filter(p => p.latitude && p.longitude);
+    const sumLat = validPhotos.reduce((sum, photo) => sum + photo.latitude, 0);
+    const sumLng = validPhotos.reduce((sum, photo) => sum + photo.longitude, 0);
     
-    initializeApp();
-  }, []);
-  
-  if (loading) {
-    return (
-      <div className="loading-container">
-        <div className="loading-spinner"></div>
-        <p>Lade Fotos und Karte...</p>
-      </div>
-    );
-  }
-  
+    return [sumLat / validPhotos.length, sumLng / validPhotos.length];
+  };
+
+  // Rendere die Karte
   return (
     <div className="map-container">
-      <div className="directory-info">
-        <div className="directory-path">
-          <span>Bildordner: {directoryInfo.isDefault ? "Standard" : directoryInfo.currentPath}</span>
+      {loading ? (
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <p>Lade Fotos...</p>
         </div>
-        <button className="select-directory-button" onClick={handleSelectDirectory}>
-          Bildordner auswählen
-        </button>
-      </div>
-      
-      <div className="photo-counter">
-        <span>{photos.length} Fotos mit GPS-Daten</span>
-        {noGpsPhotos.length > 0 && (
-          <span className="no-gps-counter">
-            {noGpsPhotos.length} Fotos ohne GPS-Daten
-          </span>
-        )}
-      </div>
-      
-      <MapContainer
-        key={mapKey} // Wichtig: Mit neuem Key wird die Map komplett neu geladen
-        center={center}
-        zoom={6}
-        style={{ height: "100%", width: "100%" }}
-      >
-        <TileLayer
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        />
-        
-        {photos.map((photo, index) => (
-          <Marker
-            key={`${photo.filename}-${index}`}
-            position={[photo.latitude, photo.longitude]}
-          >
-            <Popup>
-              <div className="popup-content">
-                <h3>{photo.filename}</h3>
-                <p>Koordinaten: {photo.latitude.toFixed(6)}, {photo.longitude.toFixed(6)}</p>
-                <div className="popup-image-container">
-                  <img 
-                    src={photo.path} 
-                    alt={photo.filename}
-                    onClick={() => showMetadata(photo.filename)}
-                    title="Klicken, um Metadaten anzuzeigen"
-                    onError={(e) => {
-                      e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
-                      e.target.style.width = "150px";
-                      e.target.style.height = "150px";
-                    }}
-                  />
-                </div>
-                <button 
-                  className="metadata-button"
-                  onClick={() => showMetadata(photo.filename)}
-                >
-                  Metadaten anzeigen
-                </button>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
-      </MapContainer>
-      
-      {error && (
-        <div className="error-overlay">
-          <p>Fehler: {error}</p>
-          <p>Es werden Beispieldaten angezeigt.</p>
-        </div>
-      )}
-      
-      {noGpsPhotos.length > 0 && (
-        <div className="no-gps-photos-panel">
-          <h3>Fotos ohne GPS-Daten ({noGpsPhotos.length})</h3>
-          <div className="no-gps-photos-list">
-            {noGpsPhotos.map((photo, index) => (
-              <div key={index} className="no-gps-photo">
-                <img 
-                  src={photo.path} 
-                  alt={photo.filename}
-                  title={photo.filename}
-                  onClick={() => showMetadata(photo.filename)}
-                  onError={(e) => {
-                    e.target.src = "https://via.placeholder.com/50x50?text=Fehler";
-                  }}
-                />
-                <span className="no-gps-photo-name">{photo.filename}</span>
-              </div>
-            ))}
+      ) : error ? (
+        <div className="error-container">
+          <h2>Fehler</h2>
+          <p>{error}</p>
+          <button onClick={refreshPhotos}>Erneut versuchen</button>
+          <div className="debug-info">
+            <h3>Debug-Informationen</h3>
+            <p>Pfad: {directoryInfo.currentPath}</p>
+            <p>Standard-Verzeichnis: {directoryInfo.isDefault ? 'Ja' : 'Nein'}</p>
+            <button className="debug-toggle-button" onClick={() => setShowDebug(!showDebug)}>
+              Debug-Details {showDebug ? 'ausblenden' : 'anzeigen'}
+            </button>
+            {showDebug && debugInfo && (
+              <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+            )}
           </div>
         </div>
+      ) : (
+        <>
+          <div className="directory-info">
+            <span className="directory-path">
+              Aktuelles Verzeichnis: {directoryInfo.currentPath || 'Nicht ausgewählt'}
+              {directoryInfo.isDefault && ' (Standard)'}
+            </span>
+            <button className="select-directory-button" onClick={handleSelectDirectory}>
+              Verzeichnis auswählen
+            </button>
+            <button className="refresh-button" onClick={refreshPhotos}>
+              Aktualisieren
+            </button>
+          </div>
+          
+          <div className="photo-counter">
+            {photos.filter(p => p.latitude && p.longitude).length} Fotos mit GPS-Daten gefunden
+          </div>
+          
+          <button className="debug-toggle-button" onClick={() => setShowDebug(!showDebug)}>
+            Debug-Infos {showDebug ? 'ausblenden' : 'anzeigen'}
+          </button>
+          
+          {showDebug && debugInfo && (
+            <div className="debug-panel">
+              <h3>Debug-Informationen</h3>
+              <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+            </div>
+          )}
+          
+          <MapContainer 
+            key={mapKey}
+            center={getMapCenter()} 
+            zoom={6} 
+            style={{ height: "calc(100vh - 150px)", width: "100%" }}
+            ref={mapRef}
+          >
+            <ChangeMapLayer 
+              activeMapType={activeMapType} 
+              setActiveMapType={setActiveMapType} 
+            />
+            
+            <MarkerClusterGroup>
+              {photos
+                .filter(photo => photo.latitude && photo.longitude)
+                .map((photo, index) => (
+                  <Marker 
+                    key={`${photo.filename}-${index}`}
+                    position={[photo.latitude, photo.longitude]}
+                  >
+                    <Popup>
+                      <div className="popup-content">
+                        <h3>{photo.filename}</h3>
+                        <div className="popup-image-container">
+                          <img 
+                            src={`http://localhost:3001${photo.path}`} 
+                            alt={photo.filename}
+                            className="clickable-image"
+                            onClick={() => openFullscreen(`http://localhost:3001${photo.path}`)}
+                          />
+                        </div>
+                        <div className="popup-info">
+                          <p>Koordinaten: {photo.latitude.toFixed(6)}, {photo.longitude.toFixed(6)}</p>
+                        </div>
+                      </div>
+                    </Popup>
+                  </Marker>
+                ))}
+            </MarkerClusterGroup>
+          </MapContainer>
+          
+          {fullscreenImage && (
+            <div className="fullscreen-container" onClick={closeFullscreen}>
+              <button className="close-button" onClick={closeFullscreen}>×</button>
+              <img src={fullscreenImage} alt="Vergrößerte Ansicht" />
+            </div>
+          )}
+        </>
       )}
-      
-      <div className="app-footer">
-        <button className="refresh-button" onClick={refreshPhotos}>
-          Aktualisieren
-        </button>
-      </div>
     </div>
   );
 }
