@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
+const { exiftool } = require('exiftool-vendored');
 
 let mainWindow;
 let server;
@@ -33,6 +34,26 @@ const FALLBACK_PHOTOS = [
     longitude: 8.682127
   }
 ];
+
+// GPS-Extraktion
+async function extractGpsData(imagePath) {
+  try {
+    const metadata = await exiftool.read(imagePath);
+    
+    if (metadata.GPSLatitude !== undefined && metadata.GPSLongitude !== undefined) {
+      return {
+        latitude: metadata.GPSLatitude,
+        longitude: metadata.GPSLongitude
+      };
+    }
+    
+    console.log(`Keine GPS-Daten gefunden in ${imagePath}`);
+    return null;
+  } catch (error) {
+    console.error(`Fehler bei der Extraktion von GPS-Daten aus ${imagePath}:`, error);
+    return null;
+  }
+}
 
 // Starte den Server
 function startServer() {
@@ -67,7 +88,7 @@ function startServer() {
   expressApp.use('/images', express.static(imagesPath));
   
   // API-Endpunkte
-  expressApp.get('/api/photos', (req, res) => {
+  expressApp.get('/api/photos', async (req, res) => {
     console.log('API-Anfrage für Fotos erhalten');
     
     try {
@@ -93,18 +114,49 @@ function startServer() {
         return res.json(FALLBACK_PHOTOS);
       }
       
-      // Erstelle Foto-Objekte mit Basisdaten (ohne GPS-Extraktion)
-      const photos = imageFiles.map((filename) => {
-        return {
-          filename: filename,
-          path: `/images/${filename}`,
-          // Zufällige Koordinaten in Deutschland für Demo-Zwecke
-          latitude: 51.1657 + (Math.random() - 0.5) * 2,
-          longitude: 10.4515 + (Math.random() - 0.5) * 4
-        };
-      });
+      // Extrahiere GPS-Daten für jedes Bild
+      const photosWithGps = [];
+      const photosWithoutGps = [];
       
-      res.json(photos);
+      for (const filename of imageFiles) {
+        const filePath = path.join(imagesPath, filename);
+        
+        try {
+          const gpsData = await extractGpsData(filePath);
+          
+          if (gpsData) {
+            photosWithGps.push({
+              filename,
+              path: `/images/${filename}`,
+              latitude: gpsData.latitude,
+              longitude: gpsData.longitude
+            });
+          } else {
+            photosWithoutGps.push({
+              filename,
+              path: `/images/${filename}`,
+              hasNoGps: true
+            });
+          }
+        } catch (err) {
+          console.error(`Fehler bei der Verarbeitung von ${filename}:`, err);
+          photosWithoutGps.push({
+            filename,
+            path: `/images/${filename}`,
+            hasNoGps: true,
+            error: err.message
+          });
+        }
+      }
+      
+      console.log(`${photosWithGps.length} Fotos mit GPS-Daten, ${photosWithoutGps.length} ohne GPS-Daten`);
+      
+      if (photosWithGps.length === 0) {
+        console.log('Keine Fotos mit GPS-Daten gefunden. Sende Fallback-Daten.');
+        return res.json(FALLBACK_PHOTOS);
+      }
+      
+      res.json(photosWithGps);
     } catch (err) {
       console.error('Fehler beim Verarbeiten der Anfrage:', err);
       res.json(FALLBACK_PHOTOS);
@@ -276,7 +328,16 @@ app.on('activate', () => {
   }
 });
 
-app.on('will-quit', () => {
+app.on('will-quit', async () => {
+  // Beende ExifTool
+  try {
+    await exiftool.end();
+    console.log('ExifTool beendet');
+  } catch (err) {
+    console.error('Fehler beim Beenden von ExifTool:', err);
+  }
+  
+  // Beende den Server
   if (server) {
     server.close();
   }

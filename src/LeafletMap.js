@@ -39,6 +39,7 @@ function LeafletMap() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [directoryInfo, setDirectoryInfo] = useState({ currentPath: null, isDefault: true });
+  const [noGpsPhotos, setNoGpsPhotos] = useState([]);
   
   // Statischer Deutschland-Mittelpunkt
   const center = [51.1657, 10.4515];
@@ -69,17 +70,24 @@ function LeafletMap() {
       const data = await response.json();
       console.log("Geladene Fotos:", data);
       
-      if (data && data.length > 0) {
-        setPhotos(data);
+      // Filtere Fotos mit und ohne GPS-Daten
+      const photosWithGps = data.filter(photo => !photo.hasNoGps);
+      const photosWithoutGps = data.filter(photo => photo.hasNoGps);
+      
+      if (photosWithGps.length > 0) {
+        setPhotos(photosWithGps);
+        setNoGpsPhotos(photosWithoutGps);
       } else {
-        console.log("Keine Fotos gefunden, verwende Fallback-Daten");
+        console.log("Keine Fotos mit GPS-Daten gefunden, verwende Fallback-Daten");
         setPhotos(FALLBACK_PHOTOS);
+        setNoGpsPhotos(photosWithoutGps);
       }
       setError(null);
     } catch (err) {
       console.error("Fehler beim Laden der Fotos:", err);
       setError(err.message);
       setPhotos(FALLBACK_PHOTOS);
+      setNoGpsPhotos([]);
     } finally {
       setLoading(false);
     }
@@ -150,7 +158,12 @@ function LeafletMap() {
       </div>
       
       <div className="photo-counter">
-        <span>{photos.length} Fotos</span>
+        <span>{photos.length} Fotos mit GPS-Daten</span>
+        {noGpsPhotos.length > 0 && (
+          <span className="no-gps-counter">
+            {noGpsPhotos.length} Fotos ohne GPS-Daten
+          </span>
+        )}
       </div>
       
       <MapContainer
@@ -172,15 +185,17 @@ function LeafletMap() {
               <div className="popup-content">
                 <h3>{photo.filename}</h3>
                 <p>Koordinaten: {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}</p>
-                <img 
-                  src={photo.path} 
-                  alt={photo.filename}
-                  onError={(e) => {
-                    e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
-                    e.target.style.width = "150px";
-                    e.target.style.height = "150px";
-                  }}
-                />
+                <div className="popup-image-container">
+                  <img 
+                    src={photo.path} 
+                    alt={photo.filename}
+                    onError={(e) => {
+                      e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
+                      e.target.style.width = "150px";
+                      e.target.style.height = "150px";
+                    }}
+                  />
+                </div>
               </div>
             </Popup>
           </Marker>
@@ -191,6 +206,26 @@ function LeafletMap() {
         <div className="error-overlay">
           <p>Fehler: {error}</p>
           <p>Es werden Beispieldaten angezeigt.</p>
+        </div>
+      )}
+      
+      {noGpsPhotos.length > 0 && (
+        <div className="no-gps-photos-panel">
+          <h3>Fotos ohne GPS-Daten ({noGpsPhotos.length})</h3>
+          <div className="no-gps-photos-list">
+            {noGpsPhotos.map((photo, index) => (
+              <div key={index} className="no-gps-photo">
+                <img 
+                  src={photo.path} 
+                  alt={photo.filename}
+                  onError={(e) => {
+                    e.target.src = "https://via.placeholder.com/50x50?text=Fehler";
+                  }}
+                />
+                <span className="no-gps-photo-name">{photo.filename}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       
