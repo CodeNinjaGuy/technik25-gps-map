@@ -38,38 +38,95 @@ function LeafletMap() {
   const [photos, setPhotos] = useState(FALLBACK_PHOTOS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [directoryInfo, setDirectoryInfo] = useState({ currentPath: null, isDefault: true });
   
   // Statischer Deutschland-Mittelpunkt
   const center = [51.1657, 10.4515];
   
-  // Lade die Fotos vom Server
-  useEffect(() => {
-    const loadPhotos = async () => {
-      try {
-        console.log("Versuche, Fotos vom Server zu laden...");
-        const response = await fetch('http://localhost:3001/api/photos');
-        if (!response.ok) {
-          throw new Error(`Server-Fehler: ${response.status}`);
-        }
-        
+  // Laden der Verzeichnisinformationen
+  const loadDirectoryInfo = async () => {
+    try {
+      const response = await fetch('http://localhost:3001/api/directory-info');
+      if (response.ok) {
         const data = await response.json();
-        console.log("Geladene Fotos:", data);
-        
-        if (data && data.length > 0) {
-          setPhotos(data);
-        } else {
-          console.log("Keine Fotos gefunden, verwende Fallback-Daten");
-        }
-      } catch (err) {
-        console.error("Fehler beim Laden der Fotos:", err);
-        setError(err.message);
-        // Verwende Fallback-Daten, da bereits bei der Initialisierung gesetzt
-      } finally {
-        setLoading(false);
+        setDirectoryInfo(data);
       }
+    } catch (err) {
+      console.error("Fehler beim Laden der Verzeichnisinformationen:", err);
+    }
+  };
+  
+  // Lade Fotos neu
+  const refreshPhotos = async () => {
+    setLoading(true);
+    try {
+      console.log("Versuche, Fotos vom Server zu laden...");
+      const response = await fetch('http://localhost:3001/api/photos');
+      if (!response.ok) {
+        throw new Error(`Server-Fehler: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log("Geladene Fotos:", data);
+      
+      if (data && data.length > 0) {
+        setPhotos(data);
+      } else {
+        console.log("Keine Fotos gefunden, verwende Fallback-Daten");
+        setPhotos(FALLBACK_PHOTOS);
+      }
+      setError(null);
+    } catch (err) {
+      console.error("Fehler beim Laden der Fotos:", err);
+      setError(err.message);
+      setPhotos(FALLBACK_PHOTOS);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Verzeichnis auswählen
+  const handleSelectDirectory = () => {
+    if (window.electron) {
+      window.electron.send('select-directory');
+    } else {
+      // Fallback für Browser-Umgebung
+      alert('Diese Funktion ist nur in der Desktop-App verfügbar.');
+    }
+  };
+  
+  // Höre auf Verzeichnisänderungen
+  useEffect(() => {
+    const handleDirectoryChange = (event, data) => {
+      console.log('Verzeichnisänderung erkannt:', data);
+      setDirectoryInfo({
+        currentPath: data.path,
+        isDefault: data.isDefault
+      });
+      refreshPhotos();
     };
     
-    loadPhotos();
+    // Registriere Event-Listener für Verzeichnisänderungen
+    if (window.electron) {
+      window.electron.receive('directory-changed', handleDirectoryChange);
+    }
+    
+    // Bereinige den Event-Listener
+    return () => {
+      if (window.electron) {
+        window.electron.removeAllListeners('directory-changed');
+      }
+    };
+  }, []);
+  
+  // Initialer Ladevorgang
+  useEffect(() => {
+    const initializeApp = async () => {
+      await loadDirectoryInfo();
+      await refreshPhotos();
+    };
+    
+    initializeApp();
   }, []);
   
   if (loading) {
@@ -83,6 +140,15 @@ function LeafletMap() {
   
   return (
     <div className="map-container">
+      <div className="directory-info">
+        <div className="directory-path">
+          <span>Bildordner: {directoryInfo.isDefault ? "Standard" : directoryInfo.currentPath}</span>
+        </div>
+        <button className="select-directory-button" onClick={handleSelectDirectory}>
+          Bildordner auswählen
+        </button>
+      </div>
+      
       <div className="photo-counter">
         <span>{photos.length} Fotos</span>
       </div>
@@ -105,7 +171,16 @@ function LeafletMap() {
             <Popup>
               <div className="popup-content">
                 <h3>{photo.filename}</h3>
-                <p>Koordinaten: {photo.latitude}, {photo.longitude}</p>
+                <p>Koordinaten: {photo.latitude.toFixed(4)}, {photo.longitude.toFixed(4)}</p>
+                <img 
+                  src={photo.path} 
+                  alt={photo.filename}
+                  onError={(e) => {
+                    e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
+                    e.target.style.width = "150px";
+                    e.target.style.height = "150px";
+                  }}
+                />
               </div>
             </Popup>
           </Marker>
@@ -118,6 +193,12 @@ function LeafletMap() {
           <p>Es werden Beispieldaten angezeigt.</p>
         </div>
       )}
+      
+      <div className="app-footer">
+        <button className="refresh-button" onClick={refreshPhotos}>
+          Aktualisieren
+        </button>
+      </div>
     </div>
   );
 }

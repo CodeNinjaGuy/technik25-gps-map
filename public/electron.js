@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -6,10 +6,11 @@ const cors = require('cors');
 
 let mainWindow;
 let server;
+let selectedImagesPath = null;
 
 // Pfade
 const isDev = process.env.NODE_ENV === 'development';
-const imagesPath = isDev ? path.join(__dirname, '../images') : path.join(process.resourcesPath, 'images');
+const defaultImagesPath = isDev ? path.join(__dirname, '../images') : path.join(process.resourcesPath, 'images');
 
 // Hartcodierte Beispieldaten für einen garantierten Start
 const FALLBACK_PHOTOS = [
@@ -45,6 +46,17 @@ function startServer() {
     allowedHeaders: ['Content-Type']
   }));
   
+  // Standardpfad für Bilder setzen
+  let imagesPath = selectedImagesPath || defaultImagesPath;
+  
+  // Verzeichnis-Info bereitstellen
+  expressApp.get('/api/directory-info', (req, res) => {
+    res.json({
+      currentPath: imagesPath,
+      isDefault: imagesPath === defaultImagesPath
+    });
+  });
+  
   // Bilder-Verzeichnis bereitstellen
   console.log('Bilder-Verzeichnis:', imagesPath);
   if (!fs.existsSync(imagesPath)) {
@@ -58,8 +70,45 @@ function startServer() {
   expressApp.get('/api/photos', (req, res) => {
     console.log('API-Anfrage für Fotos erhalten');
     
-    // Immer die Fallback-Daten zurückgeben, um sicherzustellen, dass die App funktioniert
-    res.json(FALLBACK_PHOTOS);
+    try {
+      // Aktualisiere den Bilder-Pfad (falls geändert)
+      imagesPath = selectedImagesPath || defaultImagesPath;
+      
+      // Lese alle Dateien im Bilder-Verzeichnis
+      if (!fs.existsSync(imagesPath)) {
+        console.log('Bilder-Verzeichnis existiert nicht:', imagesPath);
+        return res.json(FALLBACK_PHOTOS);
+      }
+      
+      const files = fs.readdirSync(imagesPath);
+      const imageFiles = files.filter(file => {
+        const ext = path.extname(file).toLowerCase();
+        return ['.jpg', '.jpeg', '.png', '.gif'].includes(ext);
+      });
+      
+      console.log(`${imageFiles.length} Bilddateien gefunden`);
+      
+      if (imageFiles.length === 0) {
+        console.log('Keine Bilddateien gefunden. Sende leere Liste.');
+        return res.json(FALLBACK_PHOTOS);
+      }
+      
+      // Erstelle Foto-Objekte mit Basisdaten (ohne GPS-Extraktion)
+      const photos = imageFiles.map((filename) => {
+        return {
+          filename: filename,
+          path: `/images/${filename}`,
+          // Zufällige Koordinaten in Deutschland für Demo-Zwecke
+          latitude: 51.1657 + (Math.random() - 0.5) * 2,
+          longitude: 10.4515 + (Math.random() - 0.5) * 4
+        };
+      });
+      
+      res.json(photos);
+    } catch (err) {
+      console.error('Fehler beim Verarbeiten der Anfrage:', err);
+      res.json(FALLBACK_PHOTOS);
+    }
   });
   
   expressApp.get('/api/status', (req, res) => {
@@ -89,6 +138,29 @@ function startServer() {
       console.error('Fehler beim Starten des Servers:', error);
       reject(error);
     }
+  });
+}
+
+// Dialog zum Auswählen des Bildordners
+function showFolderSelectDialog() {
+  if (!mainWindow) return;
+  
+  dialog.showOpenDialog(mainWindow, {
+    title: 'Bilder-Ordner auswählen',
+    properties: ['openDirectory']
+  }).then(result => {
+    if (!result.canceled && result.filePaths.length > 0) {
+      selectedImagesPath = result.filePaths[0];
+      console.log('Neuer Bilder-Pfad ausgewählt:', selectedImagesPath);
+      
+      // Informiere das Frontend über den neuen Pfad
+      mainWindow.webContents.send('directory-changed', {
+        path: selectedImagesPath,
+        isDefault: false
+      });
+    }
+  }).catch(err => {
+    console.error('Fehler bei der Ordnerauswahl:', err);
   });
 }
 
@@ -132,7 +204,48 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  
+  // Füge Menü hinzu
+  const { Menu } = require('electron');
+  const template = [
+    {
+      label: 'Datei',
+      submenu: [
+        {
+          label: 'Bilder-Ordner öffnen...',
+          click: showFolderSelectDialog
+        },
+        { type: 'separator' },
+        {
+          label: 'Beenden',
+          click: () => app.quit()
+        }
+      ]
+    },
+    {
+      label: 'Ansicht',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    }
+  ];
+  
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
 }
+
+// IPC-Kommunikation für die Ordnerauswahl
+ipcMain.on('select-directory', () => {
+  showFolderSelectDialog();
+});
 
 // App starten
 app.on('ready', async () => {
