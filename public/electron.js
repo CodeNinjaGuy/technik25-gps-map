@@ -19,7 +19,9 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
-      webSecurity: false // Deaktiviere die Web-Sicherheit, um lokale Dateien zu laden
+      webSecurity: false, // Deaktiviere die Web-Sicherheit, um lokale Dateien zu laden
+      javascript: true, // Stelle sicher, dass JavaScript aktiviert ist
+      devTools: true // Stelle sicher, dass DevTools aktiviert sind
     },
     icon: path.join(__dirname, 'favicon.ico')
   });
@@ -35,6 +37,12 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
     console.error('Fehler beim Laden der Anwendung:', errorCode, errorDescription);
     dialog.showErrorBox('Fehler beim Laden', `Die Anwendung konnte nicht geladen werden: ${errorDescription}`);
+    
+    // Versuche erneut zu laden
+    setTimeout(() => {
+      console.log('Versuche erneut zu laden...');
+      mainWindow.loadURL(indexPath);
+    }, 2000);
   });
 
   // Füge Event-Listener für Fehler in der Webseite hinzu

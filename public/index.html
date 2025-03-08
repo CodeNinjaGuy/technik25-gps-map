@@ -25,6 +25,24 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
     <title>Technik25 GPS Map</title>
+    <script>
+      // Überprüfe, ob JavaScript aktiviert ist
+      document.addEventListener('DOMContentLoaded', function() {
+        var noScriptElement = document.querySelector('noscript');
+        if (noScriptElement) {
+          noScriptElement.style.display = 'none';
+        }
+        
+        // Überprüfe, ob die App geladen wurde
+        setTimeout(function() {
+          var rootElement = document.getElementById('root');
+          if (rootElement && rootElement.children.length === 0) {
+            console.error('App wurde nicht korrekt geladen. Versuche erneut zu laden...');
+            window.location.reload();
+          }
+        }, 5000);
+      });
+    </script>
   </head>
   <body>
     <noscript>Sie müssen JavaScript aktivieren, um diese App nutzen zu können.</noscript>
