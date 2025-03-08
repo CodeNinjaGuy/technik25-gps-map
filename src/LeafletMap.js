@@ -66,6 +66,11 @@ function ChangeMapLayer({ activeMapType, setActiveMapType }) {
   );
 }
 
+// Prüfe, ob die Electron-Umgebung verfügbar ist
+const isElectronAvailable = () => {
+  return window && window.electron && window.electron.ipcRenderer;
+};
+
 function LeafletMap() {
   const [photos, setPhotos] = useState([]);
   const [directoryInfo, setDirectoryInfo] = useState({ currentPath: '', isDefault: true });
@@ -155,7 +160,12 @@ function LeafletMap() {
   };
 
   const handleSelectDirectory = () => {
-    window.electron.ipcRenderer.send('select-directory');
+    if (isElectronAvailable()) {
+      window.electron.ipcRenderer.send('select-directory');
+    } else {
+      console.error('Electron ist nicht verfügbar. Diese Funktion funktioniert nur in der Desktop-App.');
+      alert('Diese Funktion ist nur in der Electron-Desktop-App verfügbar, nicht im Browser.');
+    }
   };
 
   const handleDirectoryChange = (event, data) => {
@@ -175,18 +185,16 @@ function LeafletMap() {
     console.log('LeafletMap komponente initialisiert');
     
     // IPC-Listener einrichten
-    if (window.electron && window.electron.ipcRenderer) {
+    if (isElectronAvailable()) {
       window.electron.ipcRenderer.on('directory-changed', handleDirectoryChange);
+      
+      // Cleanup bei Unmount
+      return () => {
+        window.electron.ipcRenderer.removeListener('directory-changed', handleDirectoryChange);
+      };
     }
     
     initializeApp();
-    
-    // Cleanup bei Unmount
-    return () => {
-      if (window.electron && window.electron.ipcRenderer) {
-        window.electron.ipcRenderer.removeListener('directory-changed', handleDirectoryChange);
-      }
-    };
   }, []);
 
   const openFullscreen = (imagePath) => {
@@ -227,6 +235,7 @@ function LeafletMap() {
             <h3>Debug-Informationen</h3>
             <p>Pfad: {directoryInfo.currentPath}</p>
             <p>Standard-Verzeichnis: {directoryInfo.isDefault ? 'Ja' : 'Nein'}</p>
+            <p>Electron verfügbar: {isElectronAvailable() ? 'Ja' : 'Nein'}</p>
             <button className="debug-toggle-button" onClick={() => setShowDebug(!showDebug)}>
               Debug-Details {showDebug ? 'ausblenden' : 'anzeigen'}
             </button>
@@ -261,6 +270,7 @@ function LeafletMap() {
           {showDebug && debugInfo && (
             <div className="debug-panel">
               <h3>Debug-Informationen</h3>
+              <p>Electron verfügbar: {isElectronAvailable() ? 'Ja' : 'Nein'}</p>
               <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
             </div>
           )}
@@ -294,6 +304,12 @@ function LeafletMap() {
                             alt={photo.filename}
                             className="clickable-image"
                             onClick={() => openFullscreen(`http://localhost:3001${photo.path}`)}
+                            onError={(e) => {
+                              console.error(`Fehler beim Laden des Bildes: ${photo.path}`);
+                              e.target.src = "https://via.placeholder.com/150x150?text=Bild+nicht+gefunden";
+                              e.target.style.width = "150px";
+                              e.target.style.height = "150px";
+                            }}
                           />
                         </div>
                         <div className="popup-info">
