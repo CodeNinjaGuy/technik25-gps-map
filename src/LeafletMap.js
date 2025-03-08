@@ -67,60 +67,73 @@ function LeafletMap() {
   const [mapType, setMapType] = useState("osm");
   const [debugInfo, setDebugInfo] = useState(false);
   const [mapInitialized, setMapInitialized] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const mapRef = useRef(null);
   
   // Lade die Fotos vom Server
   useEffect(() => {
-    console.log("Lade Fotos vom Server...");
-    setLoading(true);
-    
-    // Bestimme die API-URL basierend auf der Umgebung
-    const apiUrl = process.env.NODE_ENV === 'production' 
-      ? 'http://localhost:3001/api/photos'
-      : 'http://localhost:3001/api/photos';
-    
-    console.log("API-URL:", apiUrl);
-    
-    // Prüfe zuerst, ob der Server läuft
-    fetch('http://localhost:3001/api/status')
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`Server-Status-Fehler: ${response.status} ${response.statusText}`);
+    const loadPhotos = async () => {
+      try {
+        console.log("Lade Fotos vom Server...");
+        setLoading(true);
+        
+        // Bestimme die API-URL basierend auf der Umgebung
+        const apiUrl = 'http://localhost:3001/api/photos';
+        
+        console.log("API-URL:", apiUrl);
+        
+        // Prüfe zuerst, ob der Server läuft
+        const statusResponse = await fetch('http://localhost:3001/api/status');
+        if (!statusResponse.ok) {
+          throw new Error(`Server-Status-Fehler: ${statusResponse.status} ${statusResponse.statusText}`);
         }
-        return response.json();
-      })
-      .then(statusData => {
+        
+        const statusData = await statusResponse.json();
         console.log("Server-Status:", statusData);
         
         // Wenn der Server läuft, lade die Fotos
-        return fetch(apiUrl);
-      })
-      .then(response => {
+        const response = await fetch(apiUrl);
         if (!response.ok) {
           throw new Error(`Server-Fehler: ${response.status} ${response.statusText}`);
         }
-        return response.json();
-      })
-      .then(data => {
+        
+        const data = await response.json();
         console.log(`${data.length} Fotos geladen`);
+        
         setPhotos(data);
         setLoading(false);
         setMapInitialized(true);
-      })
-      .catch(err => {
+        setRetryCount(0); // Zurücksetzen des Retry-Zählers bei Erfolg
+      } catch (err) {
         console.error("Fehler beim Laden der Fotos:", err);
         setError(err.message);
-        setLoading(false);
         
-        // Setze Beispieldaten, damit die Karte trotzdem angezeigt wird
-        setPhotos([{
-          filename: 'beispiel.jpg',
-          path: '/images/beispiel.jpg',
-          latitude: 51.1657,
-          longitude: 10.4515
-        }]);
-        setMapInitialized(true);
-      });
+        // Erhöhe den Retry-Zähler
+        const newRetryCount = retryCount + 1;
+        setRetryCount(newRetryCount);
+        
+        // Maximal 5 Versuche
+        if (newRetryCount < 5) {
+          console.log(`Versuche erneut in ${newRetryCount * 2} Sekunden...`);
+          setTimeout(() => {
+            loadPhotos();
+          }, newRetryCount * 2000);
+        } else {
+          // Nach 5 Versuchen Beispieldaten verwenden
+          console.log("Maximale Anzahl an Versuchen erreicht. Verwende Beispieldaten.");
+          setPhotos([{
+            filename: 'beispiel.jpg',
+            path: '/images/beispiel.jpg',
+            latitude: 51.1657,
+            longitude: 10.4515
+          }]);
+          setLoading(false);
+          setMapInitialized(true);
+        }
+      }
+    };
+    
+    loadPhotos();
   }, []);
   
   const handleMapTypeChange = (type) => {
@@ -170,7 +183,7 @@ function LeafletMap() {
     return (
       <div className="loading-container">
         <div className="loading-spinner"></div>
-        <p>Lade Fotos...</p>
+        <p>Lade Fotos... {retryCount > 0 ? `(Versuch ${retryCount}/5)` : ''}</p>
       </div>
     );
   }
@@ -183,7 +196,8 @@ function LeafletMap() {
         <div className="debug-info">
           <h3>Debug-Informationen:</h3>
           <p>Umgebung: {process.env.NODE_ENV}</p>
-          <p>API-URL: {process.env.NODE_ENV === 'production' ? 'http://localhost:3001/api/photos' : 'http://localhost:3001/api/photos'}</p>
+          <p>API-URL: http://localhost:3001/api/photos</p>
+          <p>Retry-Versuche: {retryCount}/5</p>
           <button onClick={() => window.location.reload()}>Erneut versuchen</button>
         </div>
       </div>
@@ -233,6 +247,13 @@ function LeafletMap() {
         style={{ height: "100%", width: "100%" }}
         zoomControl={false}
         ref={mapRef}
+        whenCreated={(map) => {
+          console.log("Karte erstellt");
+          // Füge einen Event-Listener hinzu, um zu überprüfen, ob die Karte korrekt geladen wurde
+          map.on('load', () => {
+            console.log("Karte geladen");
+          });
+        }}
       >
         <ChangeMapLayer mapType={mapType} />
         <ZoomControl position="bottomright" />
@@ -280,6 +301,7 @@ function LeafletMap() {
           <p>Kartenmittelpunkt: {getMapCenter().join(", ")}</p>
           <p>Fehler: {error ? error : "Keiner"}</p>
           <p>Map initialisiert: {mapInitialized ? "Ja" : "Nein"}</p>
+          <p>Retry-Versuche: {retryCount}/5</p>
           <h4>Foto-Daten:</h4>
           <pre>{JSON.stringify(photos.slice(0, 2), null, 2)}...</pre>
         </div>
