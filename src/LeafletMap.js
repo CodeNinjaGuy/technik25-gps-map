@@ -21,31 +21,38 @@ function ChangeMapLayer({ mapType }) {
   // Karten-Layer-Definitionen
   const layers = {
     osm: {
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     },
     satellite: {
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
     },
     topo: {
-      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
       attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
     }
   };
   
   useEffect(() => {
-    // Entferne alle vorhandenen Tile-Layer
-    map.eachLayer(layer => {
-      if (layer instanceof L.TileLayer) {
-        map.removeLayer(layer);
-      }
-    });
+    console.log("Kartentyp geändert zu:", mapType);
     
-    // Füge den ausgewählten Layer hinzu
-    L.tileLayer(layers[mapType].url, {
-      attribution: layers[mapType].attribution
-    }).addTo(map);
+    try {
+      // Entferne alle vorhandenen TileLayer
+      map.eachLayer(layer => {
+        if (layer instanceof L.TileLayer) {
+          map.removeLayer(layer);
+        }
+      });
+      
+      // Füge den ausgewählten TileLayer hinzu
+      const selectedLayer = layers[mapType] || layers.osm;
+      L.tileLayer(selectedLayer.url, {
+        attribution: selectedLayer.attribution
+      }).addTo(map);
+    } catch (error) {
+      console.error("Fehler beim Ändern des Kartentyps:", error);
+    }
   }, [map, mapType]);
   
   return null;
@@ -53,195 +60,228 @@ function ChangeMapLayer({ mapType }) {
 
 function LeafletMap() {
   const [photos, setPhotos] = useState([]);
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const [error, setError] = useState(null);
-  const [debugInfo, setDebugInfo] = useState({ status: "Initialisierung..." });
-  const [showDebug, setShowDebug] = useState(false);
-  const [fullscreenImage, setFullscreenImage] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [mapType, setMapType] = useState("osm"); // Standard-Kartentyp
-
-  // Angepasster Startpunkt basierend auf den GPS-Daten der Fotos (Berlin-Region)
-  const center = [52.967, 13.988];
-
-  // Funktion zum Ändern des Kartentyps
-  const handleMapTypeChange = (type) => {
-    setMapType(type);
-  };
-
+  const [error, setError] = useState(null);
+  const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [mapType, setMapType] = useState("osm");
+  const [debugInfo, setDebugInfo] = useState(false);
+  const [mapInitialized, setMapInitialized] = useState(false);
+  const mapRef = useRef(null);
+  
+  // Lade die Fotos vom Server
   useEffect(() => {
-    setDebugInfo({ status: "Starte Fetch-Anfrage..." });
+    console.log("Lade Fotos vom Server...");
     setLoading(true);
     
-    // Verwende einen Timeout, um sicherzustellen, dass der Server Zeit hat zu starten
-    setTimeout(() => {
-      fetch("http://127.0.0.1:8000/photos")
-        .then(res => {
-          setDebugInfo(prev => ({ ...prev, status: "Antwort erhalten", statusCode: res.status }));
-          if (!res.ok) {
-            throw new Error(`HTTP-Fehler: ${res.status}`);
-          }
-          return res.json();
-        })
-        .then(data => {
-          setDebugInfo(prev => ({ 
-            ...prev, 
-            status: "Daten verarbeitet", 
-            photoCount: data.length,
-            firstPhoto: data.length > 0 ? data[0] : null
-          }));
-          setPhotos(data);
-          setLoading(false);
-        })
-        .catch(err => {
-          console.error("Fetch-Fehler:", err);
-          setDebugInfo(prev => ({ ...prev, status: "Fehler", error: err.message }));
-          setError(err.message);
-          setLoading(false);
-        });
-    }, 1000); // 1 Sekunde warten
+    // Bestimme die API-URL basierend auf der Umgebung
+    const apiUrl = process.env.NODE_ENV === 'production' 
+      ? 'http://localhost:3001/api/photos'
+      : 'http://localhost:3001/api/photos';
+    
+    console.log("API-URL:", apiUrl);
+    
+    // Prüfe zuerst, ob der Server läuft
+    fetch('http://localhost:3001/api/status')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server-Status-Fehler: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(statusData => {
+        console.log("Server-Status:", statusData);
+        
+        // Wenn der Server läuft, lade die Fotos
+        return fetch(apiUrl);
+      })
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Server-Fehler: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log(`${data.length} Fotos geladen`);
+        setPhotos(data);
+        setLoading(false);
+        setMapInitialized(true);
+      })
+      .catch(err => {
+        console.error("Fehler beim Laden der Fotos:", err);
+        setError(err.message);
+        setLoading(false);
+        
+        // Setze Beispieldaten, damit die Karte trotzdem angezeigt wird
+        setPhotos([{
+          filename: 'beispiel.jpg',
+          path: '/images/beispiel.jpg',
+          latitude: 51.1657,
+          longitude: 10.4515
+        }]);
+        setMapInitialized(true);
+      });
   }, []);
-
-  // Funktion zum Öffnen des Bildes im Vollbildmodus
+  
+  const handleMapTypeChange = (type) => {
+    console.log("Wechsle zu Kartentyp:", type);
+    setMapType(type);
+  };
+  
+  const toggleDebugInfo = () => {
+    setDebugInfo(!debugInfo);
+  };
+  
+  // Berechne den Mittelpunkt der Karte basierend auf den Fotos
+  const getMapCenter = () => {
+    if (photos.length === 0) {
+      return [51.1657, 10.4515]; // Deutschland-Mitte als Fallback
+    }
+    
+    const latSum = photos.reduce((sum, photo) => sum + photo.latitude, 0);
+    const lngSum = photos.reduce((sum, photo) => sum + photo.longitude, 0);
+    
+    return [latSum / photos.length, lngSum / photos.length];
+  };
+  
   const openFullscreen = (imageUrl) => {
-    setFullscreenImage(imageUrl);
+    setSelectedPhoto(imageUrl);
+    setFullscreen(true);
   };
-
-  // Funktion zum Schließen des Vollbildmodus
+  
   const closeFullscreen = () => {
-    setFullscreenImage(null);
+    setFullscreen(false);
   };
-
-  // Tastaturereignisse für den Vollbildmodus
+  
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.key === "Escape" && fullscreenImage) {
+      if (e.key === "Escape" && fullscreen) {
         closeFullscreen();
       }
     };
-
+    
     window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [fullscreenImage]);
-
+  }, [fullscreen]);
+  
   if (loading) {
-    return <div className="loading-screen">Lade Fotos und Karte...</div>;
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <p>Lade Fotos...</p>
+      </div>
+    );
   }
-
+  
+  if (error && !mapInitialized) {
+    return (
+      <div className="error-container">
+        <h2>Fehler beim Laden der Fotos</h2>
+        <p>{error}</p>
+        <div className="debug-info">
+          <h3>Debug-Informationen:</h3>
+          <p>Umgebung: {process.env.NODE_ENV}</p>
+          <p>API-URL: {process.env.NODE_ENV === 'production' ? 'http://localhost:3001/api/photos' : 'http://localhost:3001/api/photos'}</p>
+          <button onClick={() => window.location.reload()}>Erneut versuchen</button>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div className="map-container">
-      <MapContainer 
-        center={center} 
-        zoom={14} 
-        style={{ height: "100%", width: "100%" }}
-        zoomControl={false} // Deaktiviere die Standard-Zoom-Steuerung
-      >
-        {/* Zoom-Steuerung in der oberen rechten Ecke */}
-        <ZoomControl position="topright" />
-        
-        {/* Kartentyp-Wechsler */}
-        <ChangeMapLayer mapType={mapType} />
-        
-        <MarkerClusterGroup>
-          {photos.map(photo => (
-            <Marker 
-              key={photo.image_url} 
-              position={[photo.latitude, photo.longitude]}
-              eventHandlers={{
-                click: () => setSelectedPhoto(photo)
-              }}
-            >
-              {selectedPhoto && selectedPhoto.image_url === photo.image_url && (
-                <Popup onClose={() => setSelectedPhoto(null)}>
-                  <div className="photo-info">
-                    <img 
-                      src={`http://127.0.0.1:8000${photo.image_url}`} 
-                      alt="Foto" 
-                      width="200" 
-                      onClick={() => openFullscreen(`http://127.0.0.1:8000${photo.image_url}`)}
-                      className="clickable-image"
-                    />
-                    <div className="photo-controls">
-                      <button onClick={() => openFullscreen(`http://127.0.0.1:8000${photo.image_url}`)}>
-                        Vollbild
-                      </button>
-                    </div>
-                  </div>
-                </Popup>
-              )}
-            </Marker>
-          ))}
-        </MarkerClusterGroup>
-      </MapContainer>
+      {fullscreen && (
+        <div className="fullscreen-container" onClick={closeFullscreen}>
+          <img src={selectedPhoto} alt="Vollbild" />
+          <button className="close-button" onClick={closeFullscreen}>
+            Schließen
+          </button>
+        </div>
+      )}
       
-      {/* Manuelle Kartentyp-Auswahl */}
       <div className="map-type-selector">
-        <button 
-          className={`map-type-button ${mapType === 'osm' ? 'active' : ''}`} 
-          onClick={() => handleMapTypeChange('osm')}
+        <button
+          className={mapType === "osm" ? "active" : ""}
+          onClick={() => handleMapTypeChange("osm")}
         >
-          Straßenkarte
+          OpenStreetMap
         </button>
-        <button 
-          className={`map-type-button ${mapType === 'satellite' ? 'active' : ''}`} 
-          onClick={() => handleMapTypeChange('satellite')}
+        <button
+          className={mapType === "satellite" ? "active" : ""}
+          onClick={() => handleMapTypeChange("satellite")}
         >
           Satellit
         </button>
-        <button 
-          className={`map-type-button ${mapType === 'topo' ? 'active' : ''}`} 
-          onClick={() => handleMapTypeChange('topo')}
+        <button
+          className={mapType === "topo" ? "active" : ""}
+          onClick={() => handleMapTypeChange("topo")}
         >
           Topographisch
         </button>
       </div>
       
-      {/* Foto-Zähler */}
       <div className="photo-counter">
-        {photos.length} Fotos geladen
+        <span>{photos.length} Fotos</span>
       </div>
       
-      {/* Debug-Button */}
-      <button 
-        className="debug-toggle-button" 
-        onClick={() => setShowDebug(!showDebug)}
+      <MapContainer
+        key={mapInitialized ? "initialized" : "loading"}
+        center={getMapCenter()}
+        zoom={6}
+        style={{ height: "100%", width: "100%" }}
+        zoomControl={false}
+        ref={mapRef}
       >
-        {showDebug ? "Debug ausblenden" : "Debug anzeigen"}
+        <ChangeMapLayer mapType={mapType} />
+        <ZoomControl position="bottomright" />
+        
+        <MarkerClusterGroup>
+          {photos.map((photo, index) => (
+            <Marker
+              key={index}
+              position={[photo.latitude, photo.longitude]}
+            >
+              <Popup>
+                <div className="popup-content">
+                  <img
+                    src={photo.path}
+                    alt={photo.filename}
+                    onClick={() => openFullscreen(photo.path)}
+                    onError={(e) => {
+                      console.error(`Fehler beim Laden des Bildes: ${photo.path}`);
+                      e.target.src = "https://via.placeholder.com/200x150?text=Bild+nicht+verfügbar";
+                    }}
+                  />
+                  <div className="popup-info">
+                    <p>{photo.filename}</p>
+                    <button onClick={() => openFullscreen(photo.path)}>
+                      Vollbild
+                    </button>
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+        </MarkerClusterGroup>
+      </MapContainer>
+      
+      <button className="debug-button" onClick={toggleDebugInfo}>
+        {debugInfo ? "Debug ausblenden" : "Debug anzeigen"}
       </button>
       
-      {/* Debug-Informationen */}
-      {showDebug && (
+      {debugInfo && (
         <div className="debug-panel">
-          <h3>Debug-Info:</h3>
-          <p>Status: {debugInfo.status}</p>
+          <h3>Debug-Informationen</h3>
+          <p>Umgebung: {process.env.NODE_ENV}</p>
           <p>Kartentyp: {mapType}</p>
-          {debugInfo.statusCode && <p>Status-Code: {debugInfo.statusCode}</p>}
-          {debugInfo.photoCount !== undefined && <p>Anzahl Fotos: {debugInfo.photoCount}</p>}
-          {debugInfo.firstPhoto && (
-            <div>
-              <p>Erstes Foto:</p>
-              <pre>{JSON.stringify(debugInfo.firstPhoto, null, 2)}</pre>
-            </div>
-          )}
-          {error && <p style={{ color: "red" }}>Fehler: {error}</p>}
-        </div>
-      )}
-
-      {/* Vollbild-Ansicht */}
-      {fullscreenImage && (
-        <div className="fullscreen-overlay" onClick={closeFullscreen}>
-          <div className="fullscreen-container">
-            <img 
-              src={fullscreenImage} 
-              alt="Vollbild" 
-              className="fullscreen-image" 
-            />
-            <button className="fullscreen-close" onClick={closeFullscreen}>
-              Schließen
-            </button>
-          </div>
+          <p>Anzahl Fotos: {photos.length}</p>
+          <p>Kartenmittelpunkt: {getMapCenter().join(", ")}</p>
+          <p>Fehler: {error ? error : "Keiner"}</p>
+          <p>Map initialisiert: {mapInitialized ? "Ja" : "Nein"}</p>
+          <h4>Foto-Daten:</h4>
+          <pre>{JSON.stringify(photos.slice(0, 2), null, 2)}...</pre>
         </div>
       )}
     </div>

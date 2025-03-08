@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('path');
 const isDev = require('electron-is-dev');
 const { spawn } = require('child_process');
@@ -18,7 +18,8 @@ function createWindow() {
     height: 800,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      webSecurity: false // Deaktiviere die Web-Sicherheit, um lokale Dateien zu laden
     },
     icon: path.join(__dirname, 'favicon.ico')
   });
@@ -30,6 +31,21 @@ function createWindow() {
   
   console.log('Lade Anwendung von:', indexPath);
   
+  // Füge Event-Listener für Fehler beim Laden hinzu
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Fehler beim Laden der Anwendung:', errorCode, errorDescription);
+    dialog.showErrorBox('Fehler beim Laden', `Die Anwendung konnte nicht geladen werden: ${errorDescription}`);
+  });
+
+  // Füge Event-Listener für Fehler in der Webseite hinzu
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[WebContents] ${message}`);
+    if (level === 2) { // Fehler
+      console.error(`Fehler in der Webseite: ${message}`);
+    }
+  });
+
+  // Lade die Anwendung
   mainWindow.loadURL(indexPath);
 
   // Öffne die DevTools im Entwicklungsmodus
@@ -78,14 +94,23 @@ function startServer() {
     const PORT = process.env.PORT || 3001;
     
     // CORS für Entwicklung aktivieren
-    expressApp.use(cors());
+    expressApp.use(cors({
+      origin: '*',
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization']
+    }));
     
     // Bestimme den Pfad zum Bilder-Verzeichnis
     const imagesPath = process.env.IMAGES_PATH || path.join(process.resourcesPath, 'images');
     console.log('Bilder-Verzeichnis:', imagesPath);
     
     // Statische Dateien bereitstellen
-    expressApp.use('/images', express.static(imagesPath));
+    expressApp.use('/images', express.static(imagesPath, {
+      setHeaders: (res) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET');
+      }
+    }));
     
     // Überprüfe, ob das Bilder-Verzeichnis existiert
     if (!fs.existsSync(imagesPath)) {
@@ -107,6 +132,11 @@ function startServer() {
         });
         
         console.log(`${imageFiles.length} Bilddateien gefunden`);
+        
+        if (imageFiles.length === 0) {
+          console.log('Keine Bilddateien gefunden. Sende leere Liste.');
+          return res.json([]);
+        }
         
         // Extrahiere GPS-Daten mit Python-Skript
         const pythonScript = `
@@ -196,12 +226,43 @@ print(json.dumps(photo_data))
           if (error) {
             console.error(`Fehler bei der Ausführung des Python-Skripts: ${error.message}`);
             console.error(`stderr: ${stderr}`);
-            return res.status(500).json({ error: 'Fehler bei der Verarbeitung der Bilder' });
+            
+            // Versuche es mit Python3 statt Python
+            exec(`python3 ${tempPyFile}`, (error2, stdout2, stderr2) => {
+              if (error2) {
+                console.error(`Fehler bei der Ausführung mit python3: ${error2.message}`);
+                console.error(`stderr: ${stderr2}`);
+                return res.status(500).json({ error: 'Fehler bei der Verarbeitung der Bilder' });
+              }
+              
+              try {
+                const photoData = JSON.parse(stdout2);
+                console.log(`${photoData.length} Fotos mit GPS-Daten gefunden`);
+                res.json(photoData);
+              } catch (parseError) {
+                console.error('Fehler beim Parsen der Python-Ausgabe:', parseError);
+                console.error('Python-Ausgabe:', stdout2);
+                res.status(500).json({ error: 'Fehler beim Parsen der Metadaten' });
+              }
+            });
+            return;
           }
           
           try {
             const photoData = JSON.parse(stdout);
             console.log(`${photoData.length} Fotos mit GPS-Daten gefunden`);
+            
+            // Wenn keine Fotos mit GPS-Daten gefunden wurden, sende eine Beispiel-Koordinate
+            if (photoData.length === 0) {
+              console.log('Keine Fotos mit GPS-Daten gefunden. Sende Beispiel-Koordinate.');
+              return res.json([{
+                filename: 'beispiel.jpg',
+                path: '/images/beispiel.jpg',
+                latitude: 51.1657,
+                longitude: 10.4515
+              }]);
+            }
+            
             res.json(photoData);
           } catch (parseError) {
             console.error('Fehler beim Parsen der Python-Ausgabe:', parseError);
@@ -213,6 +274,11 @@ print(json.dumps(photo_data))
         console.error('Fehler beim Verarbeiten der Anfrage:', err);
         res.status(500).json({ error: err.message });
       }
+    });
+    
+    // API-Endpunkt für Server-Status
+    expressApp.get('/api/status', (req, res) => {
+      res.json({ status: 'ok', timestamp: new Date().toISOString() });
     });
     
     // Statische Dateien aus dem Build-Verzeichnis bereitstellen
@@ -243,6 +309,15 @@ print(json.dumps(photo_data))
   }
 }
 
+// IPC-Kommunikation für Debugging
+ipcMain.on('log-message', (event, message) => {
+  console.log(`[Renderer] ${message}`);
+});
+
+ipcMain.on('error-message', (event, message) => {
+  console.error(`[Renderer] ${message}`);
+});
+
 app.on('ready', () => {
   console.log('Electron-App wird gestartet...');
   console.log('Entwicklungsmodus:', isDev);
@@ -255,7 +330,11 @@ app.on('ready', () => {
   }
   
   startServer();
-  createWindow();
+  
+  // Warte kurz, bis der Server gestartet ist
+  setTimeout(() => {
+    createWindow();
+  }, 1000);
 });
 
 app.on('window-all-closed', () => {
