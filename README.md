@@ -1,21 +1,28 @@
 # Technik25 GPS Map
 
-Eine Webanwendung zur Visualisierung von Fotos auf einer Karte basierend auf ihren GPS-Koordinaten.
+Eine Electron-Anwendung zum Visualisieren von Fotos auf einer Karte basierend auf ihren GPS-Koordinaten.
 
 ## Funktionen
 
-- Anzeige von Fotos auf einer interaktiven Karte basierend auf GPS-Metadaten
-- Unterstützung für verschiedene Kartenansichten (OpenStreetMap, Satellit, Topographisch)
-- Marker-Clustering für bessere Übersicht bei vielen Fotos
-- Anzeige von Foto-Vorschaubildern beim Klicken auf Marker
-- Ladebildschirm während der Initialisierung
-- Anzeige der Gesamtanzahl der Fotos
+- Fotos mit GPS-Metadaten auf einer interaktiven Karte anzeigen
+- Wechsel zwischen verschiedenen Kartenansichten (OpenStreetMap, Satellit, Topografisch)
+- Marker-Clustering für bessere Übersichtlichkeit bei vielen Fotos
+- Bildergalerie mit Metadaten-Anzeige
+- Auswahl unterschiedlicher Bildverzeichnisse
+- Echtzeit-Aktualisierung der Karte
+- Vollbildansicht für Fotos
+
+## Neue Funktionen
+
+- **Python-basierte GPS-Extraktion**: Zuverlässigere Methode zur Extraktion von GPS-Daten aus Fotos ohne Abhängigkeit von ExifTool
+- **Verbesserte Fehlerbehandlung**: Automatische Wiederholungsversuche und detaillierte Debug-Informationen
+- **Dynamisches Kartenzentrum**: Die Karte zentriert sich automatisch auf die vorhandenen Fotos
 
 ## Voraussetzungen
 
-- Node.js (v14 oder höher)
-- Python 3.x (für den Backend-Server)
-- Bilder mit GPS-Metadaten im Verzeichnis `images/`
+- Node.js 20+
+- npm oder yarn
+- Python 3.x mit Pillow (PIL) installiert
 
 ## Installation
 
@@ -28,55 +35,41 @@ Eine Webanwendung zur Visualisierung von Fotos auf einer Karte basierend auf ihr
 2. Installieren Sie die Abhängigkeiten:
    ```
    npm install
-   pip install pillow
    ```
+
+3. Installieren Sie Python und Pillow:
+   ```
+   pip install Pillow
+   ```
+
+## Entwicklung
+
+Starten Sie die Anwendung im Entwicklungsmodus:
+```
+npm run electron-dev
+```
+
+## Build
+
+Erstellen Sie eine ausführbare Datei für Ihr Betriebssystem:
+```
+npm run electron-build
+```
 
 ## Verwendung
 
-### Entwicklungsmodus
+- Klicken Sie auf "Verzeichnis auswählen", um einen Ordner mit Fotos auszuwählen
+- Die Fotos mit GPS-Daten werden auf der Karte angezeigt
+- Klicken Sie auf einen Marker, um das Foto und dessen Koordinaten zu sehen
+- Wechseln Sie die Kartenansicht mit den Schaltflächen oben rechts
+- Klicken Sie auf ein Foto in einem Popup, um es im Vollbildmodus anzuzeigen
 
-1. Starten Sie den Backend-Server:
-   ```
-   node server.js
-   ```
+## Fehlerbehebung
 
-2. Starten Sie den Frontend-Server in einem separaten Terminal:
-   ```
-   npm start
-   ```
-
-3. Öffnen Sie die Anwendung in Ihrem Browser unter `http://localhost:3000`
-
-### Electron-Entwicklungsmodus
-
-Um die Anwendung als Electron-App im Entwicklungsmodus zu starten:
-
-```
-npm run electron:dev
-```
-
-### Kompilieren einer eigenständigen Anwendung
-
-Sie können eine eigenständige Desktop-Anwendung erstellen, die mit einem Klick gestartet werden kann:
-
-1. Bauen Sie die Anwendung:
-   ```
-   npm run electron:build
-   ```
-
-2. Die kompilierte Anwendung finden Sie im Verzeichnis `dist/`:
-   - Windows: `dist/Technik25 GPS Map Setup.exe`
-   - macOS: `dist/Technik25 GPS Map-[version]-[arch].dmg` (z.B. `Technik25 GPS Map-1.0.0-arm64.dmg`)
-   - Linux: `dist/Technik25 GPS Map-[version]-[arch].AppImage`
-
-3. Installieren Sie die Anwendung durch Doppelklick auf die entsprechende Datei.
-
-## Hinweise zur Verwendung
-
-- Legen Sie Ihre Fotos mit GPS-Metadaten im Verzeichnis `images/` ab
-- Die Anwendung unterstützt gängige Bildformate wie JPG, JPEG, PNG
-- Fotos ohne GPS-Metadaten werden nicht auf der Karte angezeigt
-- Für eine optimale Leistung wird empfohlen, nicht mehr als einige tausend Fotos gleichzeitig zu verwalten
+- **Keine Fotos werden angezeigt**: Stellen Sie sicher, dass Ihre Fotos GPS-Metadaten enthalten
+- **Python-Fehler**: Überprüfen Sie, ob Python und Pillow korrekt installiert sind
+- **Bildpfade-Probleme**: Bei Problemen mit Bildpfaden überprüfen Sie die URLs in der Konsole
+- **Entwicklerwerkzeuge**: Öffnen Sie die Chrome DevTools (Strg+Shift+I / Cmd+Opt+I), um Fehler zu sehen
 
 ## Technologien
 
